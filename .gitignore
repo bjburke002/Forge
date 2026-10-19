@@ -1,0 +1,79 @@
+# ---------------------------------------------------------------
+# Terraform
+# ---------------------------------------------------------------
+# Provider plugins and module cache (recreated by terraform init)
+**/.terraform/
+
+*.tfstate
+*.tfstate.*
+*.tflock
+
+*.tfplan
+tfplan
+*.plan
+
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Local overrides and crash output
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
+.terraformrc
+terraform.rc
+
+# ---------------------------------------------------------------
+# Go
+# ---------------------------------------------------------------
+# Build output (Makefile and kubebuilder put tools here too)
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.*
+cover.out
+
+# envtest binaries downloaded by setup-envtest
+/testbin/
+
+# Local Go workspace file
+go.work
+go.work.sum
+
+# ---------------------------------------------------------------
+# Kubernetes and secrets
+# ---------------------------------------------------------------
+kubeconfig
+*.kubeconfig
+.env
+.env.*
+!.env.example
+.envrc.local
+*.pem
+*.key
+
+# ---------------------------------------------------------------
+# Editors and OS
+# ---------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+~$Forge_Project_Plan.xlsx
+Forge_Architecture_v2.docx
+.gitignore
+infra/terraform/boostrap/tfstate-access.json
