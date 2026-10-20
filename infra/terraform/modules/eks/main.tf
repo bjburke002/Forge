@@ -94,6 +94,15 @@ resource "aws_eks_addon" "aws_ebs_csi_driver" {
   }
 }
 
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name = aws_eks_cluster.this.name
+  addon_name   = "metrics-server"
+
+  depends_on = [
+    aws_eks_node_group.this
+  ]
+}
+
 resource "aws_iam_role" "cluster" {
   name = "${var.cluster_name}-eks-cluster-role"
   assume_role_policy = jsonencode({
@@ -181,4 +190,22 @@ resource "aws_ec2_tag" "karpenter_discovery" {
   resource_id = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
   key         = "karpenter.sh/discovery"
   value       = var.cluster_name
+}
+
+# Granting forge-admin access to the cluster 
+resource "aws_eks_access_entry" "forge_admin" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = var.forge_admin_iam_role_arn
+  type          = "STANDARD"
+}
+
+# Grant the role cluster-admin permission 
+resource "aws_eks_access_policy_association" "forge_admin" {
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = aws_eks_access_entry.forge_admin.principal_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+
+  access_scope {
+    type = "cluster"
+  }
 }
