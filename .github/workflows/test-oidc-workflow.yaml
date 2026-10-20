@@ -1,4 +1,9 @@
 # Need ID token write permission to use OIDC
+name: Test OIDC Connection
+
+on:
+  workflow_dispatch: 
+  
 permissions:
   id-token: write
 jobs:
