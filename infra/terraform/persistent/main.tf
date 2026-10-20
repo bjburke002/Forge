@@ -25,3 +25,11 @@ module "ecr" {
 
   prefix = "forge"
 }
+
+module "github_oidc" {
+  source = "../modules/github-oidc"
+
+  github_repository          = var.github_repository
+  allowed_branch             = var.allowed_branch
+  ecr_repository_arn_pattern = module.ecr.ecr_repository_arn_pattern
+}
