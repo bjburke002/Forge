@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-namespace: hello
+  namespace: hello
   name: hello-nginx
   labels:
     app: hello-nginx
