@@ -1,0 +1,39 @@
+# Overrides for the argo-cd chart (10.10.5). Everything not listed uses the chart's defaults:
+#   helm show values argo/argo-cd --version 10.10.5
+# Sized for the two t3a.small system nodes: single replicas, no SSO or notifications.
+
+global:
+  domain: argocd.forgeappservices.com
+
+# Not used yet: SSO is out of scope and alerting goes through Alertmanager.
+dex:
+  enabled: false
+notifications:
+  enabled: false
+
+# Requests keep the scheduler honest on small nodes; memory limits stop one
+# component starving the add-ons. Defaults are unset ({}).
+controller:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { memory: 512Mi }
+
+repoServer:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits:   { memory: 256Mi }
+
+server:
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { memory: 256Mi }
+
+applicationSet:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+
+redis:
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits:   { memory: 64Mi }
