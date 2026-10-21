@@ -25,3 +25,15 @@ module "iam" {
   cluster_name = module.eks.cluster_name
   domain_name  = "forgeappservices.com"
 }
+
+module "argocd" {
+  source = "./modules/argocd"
+
+  repo_url = var.repo_url
+  revision = var.revision
+  path     = var.path
+
+
+  depends_on = [module.eks]
+}
+
