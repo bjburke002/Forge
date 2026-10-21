@@ -5,11 +5,11 @@ variable "aws_region" {
 }
 
 variable "github_repository" {
-    type = string
-    description = "The GitHub repository name for the OIDC provider."
+  type        = string
+  description = "The GitHub repository name for the OIDC provider."
 }
 
-variable "allowed_branch"{
-    type = string
-    description = "The allowed branch for the OIDC provider."
+variable "allowed_branch" {
+  type        = string
+  description = "The allowed branch for the OIDC provider."
 }

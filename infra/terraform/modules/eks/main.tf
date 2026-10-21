@@ -41,7 +41,6 @@ resource "aws_eks_node_group" "this" {
   depends_on = [
     aws_iam_role_policy_attachment.node_AmazonEKSWorkerNodePolicy,
     aws_iam_role_policy_attachment.node_AmazonEC2ContainerRegistryPullOnly,
-    aws_iam_role_policy_attachment.node_AmazonEKS_CNI_Policy,
     aws_eks_addon.vpc_cni,
   ]
 }
@@ -56,6 +55,41 @@ resource "aws_eks_addon" "vpc_cni" {
       "WARM_PREFIX_TARGET"       = "1"
     }
   })
+
+  pod_identity_association {
+    role_arn        = aws_iam_role.vpc_cni.arn
+    service_account = "aws-node"
+  }
+
+
+  depends_on = [
+    aws_eks_addon.eks_pod_identity_agent,
+    aws_iam_role_policy_attachment.vpc_cni_AmazonEKS_CNI_Policy
+  ]
+}
+
+resource "aws_iam_role" "vpc_cni" {
+  name = "${var.cluster_name}-cni-pod-identity-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Effect = "Allow"
+        Principal = {
+          Service = "pods.eks.amazonaws.com"
+        }
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "vpc_cni_AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.vpc_cni.name
 }
 
 resource "aws_eks_addon" "kube_proxy" {
@@ -152,11 +186,6 @@ resource "aws_iam_role_policy_attachment" "node_AmazonEKSWorkerNodePolicy" {
 
 resource "aws_iam_role_policy_attachment" "node_AmazonEC2ContainerRegistryPullOnly" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly"
-  role       = aws_iam_role.node.name
-}
-
-resource "aws_iam_role_policy_attachment" "node_AmazonEKS_CNI_Policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
   role       = aws_iam_role.node.name
 }
 

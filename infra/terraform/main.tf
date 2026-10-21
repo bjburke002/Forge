@@ -1,25 +1,3 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 6.0"
-    }
-  }
-  required_version = ">= 1.10.0"
-}
-
-# Configure the provider
-provider "aws" {
-  region = var.aws_region
-
-  default_tags {
-    tags = {
-      Project   = "forge"
-      ManagedBy = "terraform"
-    }
-  }
-}
-
 module "vpc" {
   source = "./modules/vpc"
 
@@ -28,8 +6,18 @@ module "vpc" {
   cluster_name   = "forge"
 }
 
-module "ecr" {
-  source = "./modules/ecr"
+module "eks" {
+  source = "./modules/eks"
 
-  prefix = "forge"
+  cluster_name             = "forge"
+  subnet_ids               = module.vpc.private_subnet_ids
+  allowed_IP_addresses     = var.allowed_IP_addresses
+  forge_admin_iam_role_arn = var.forge_admin_iam_role_arn
+}
+
+module "iam" {
+  source = "./modules/iam"
+
+  cluster_name = module.eks.cluster_name
+  domain_name  = "forgeappservices.com"
 }
