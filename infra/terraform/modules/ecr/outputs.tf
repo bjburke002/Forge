@@ -1,4 +1,4 @@
-output "registry_url" {
+output "ecr_registry_url" {
   description = "Push to <registry_url>/<service>:<tag>"
   value       = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${data.aws_region.current.region}.amazonaws.com/${var.prefix}"
 }

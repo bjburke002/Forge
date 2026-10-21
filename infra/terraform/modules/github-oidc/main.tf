@@ -1,12 +1,10 @@
 resource "aws_iam_openid_connect_provider" "github" {
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
-
-
 }
 
 resource "aws_iam_role" "ci_oidc_role" {
-  name = "forge-github-oidc-role"
+  name = "${var.cluster_name}-github-oidc-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -41,9 +39,16 @@ resource "aws_iam_role_policy" "ci_ecr_push" {
           "ecr:UploadLayerPart",
           "ecr:CompleteLayerUpload",
           "ecr:PutImage",
-          "ecr:BatchGetImage",
+          "ecr:BatchGetImage"
         ]
         Resource = var.ecr_repository_arn_pattern
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ]
+        Resource = ["*"]
       }
     ]
   })

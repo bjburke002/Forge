@@ -12,3 +12,8 @@ variable "ecr_repository_arn_pattern" {
   type        = string
   description = "The ARN pattern for the ECR repository that the OIDC provider will have access to."
 }
+
+variable "cluster_name" {
+  type        = string
+  description = "EKS cluster name."
+}

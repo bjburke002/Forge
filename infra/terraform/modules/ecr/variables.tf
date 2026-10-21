@@ -1,7 +1,7 @@
 variable "prefix" {
   type        = string
   default     = "forge"
-  description = "Respository namespace. Pushes to <prefix>/<name> create repos from the template defined in this module."
+  description = "Repository namespace. Pushes to <prefix>/<name> create repos from the template defined in this module."
 }
 
 variable "untagged_expiry_days" {

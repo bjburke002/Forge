@@ -2,7 +2,8 @@ resource "aws_eks_cluster" "this" {
   name = var.cluster_name
 
   access_config {
-    authentication_mode = "API"
+    authentication_mode                         = "API"
+    bootstrap_cluster_creator_admin_permissions = false
   }
 
   role_arn = aws_iam_role.cluster.arn
@@ -12,7 +13,7 @@ resource "aws_eks_cluster" "this" {
     subnet_ids              = var.subnet_ids
     endpoint_public_access  = true
     endpoint_private_access = true
-    public_access_cidrs     = var.allowed_IP_addresses
+    public_access_cidrs     = var.allowed_ip_addresses
   }
 
   upgrade_policy {
@@ -60,7 +61,6 @@ resource "aws_eks_addon" "vpc_cni" {
     role_arn        = aws_iam_role.vpc_cni.arn
     service_account = "aws-node"
   }
-
 
   depends_on = [
     aws_eks_addon.eks_pod_identity_agent,
@@ -120,7 +120,6 @@ resource "aws_eks_addon" "aws_ebs_csi_driver" {
     aws_eks_addon.eks_pod_identity_agent,
     aws_iam_role_policy_attachment.ebs_csi_AmazonEBSCSIDriverPolicy
   ]
-
 
   pod_identity_association {
     role_arn        = aws_iam_role.ebs_csi.arn
