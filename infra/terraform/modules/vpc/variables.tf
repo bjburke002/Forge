@@ -12,6 +12,11 @@ variable "number_of_azs" {
   type        = number
   default     = 2
   description = "The number of availability zones to use for the VPC."
+
+  validation {
+    condition     = var.number_of_azs >= 2 && var.number_of_azs <= 3
+    error_message = "At least 2 AZs are needed, but no more than 3."
+  }
 }
 
 variable "cluster_name" {

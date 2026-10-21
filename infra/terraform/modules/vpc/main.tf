@@ -1,4 +1,4 @@
-resource "aws_vpc" "forge_vpc" {
+resource "aws_vpc" "this" {
   cidr_block           = var.vpc_cidr_block
   enable_dns_support   = true
   enable_dns_hostnames = true
@@ -10,7 +10,7 @@ resource "aws_vpc" "forge_vpc" {
 
 # Lock down default security group
 resource "aws_default_security_group" "default" {
-  vpc_id = aws_vpc.forge_vpc.id
+  vpc_id = aws_vpc.this.id
   tags = {
     Name = "${var.cluster_name}-default-deny"
   }
@@ -29,7 +29,7 @@ locals {
 resource "aws_subnet" "public" {
   count = length(local.azs) # 2 AZs by default so this will create 2 public subnets
 
-  vpc_id                  = aws_vpc.forge_vpc.id
+  vpc_id                  = aws_vpc.this.id
   cidr_block              = local.public[count.index]
   availability_zone       = local.azs[count.index]
   map_public_ip_on_launch = false
@@ -43,7 +43,7 @@ resource "aws_subnet" "public" {
 resource "aws_subnet" "private" {
   count = length(local.azs) # 2 AZs by default so this will create 2 private subnets
 
-  vpc_id                  = aws_vpc.forge_vpc.id
+  vpc_id                  = aws_vpc.this.id
   cidr_block              = local.private[count.index]
   availability_zone       = local.azs[count.index]
   map_public_ip_on_launch = false
@@ -57,7 +57,7 @@ resource "aws_subnet" "private" {
 
 # Internet access for public subnets
 resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.forge_vpc.id
+  vpc_id = aws_vpc.this.id
 
   tags = {
     Name = "${var.cluster_name}-igw"
@@ -65,7 +65,7 @@ resource "aws_internet_gateway" "igw" {
 }
 
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.forge_vpc.id
+  vpc_id = aws_vpc.this.id
 
   route {
     cidr_block = "0.0.0.0/0"
@@ -83,7 +83,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# Single NAT gatway in the first public subnet
+# Single NAT gateway in the first public subnet
 resource "aws_eip" "nat" {
   domain = "vpc"
   tags = {
@@ -104,7 +104,7 @@ resource "aws_nat_gateway" "nat" {
 
 # Single private route table for all private subnets
 resource "aws_route_table" "private" {
-  vpc_id = aws_vpc.forge_vpc.id
+  vpc_id = aws_vpc.this.id
 
   route {
     cidr_block     = "0.0.0.0/0"

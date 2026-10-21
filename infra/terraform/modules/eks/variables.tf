@@ -8,9 +8,14 @@ variable "subnet_ids" {
   description = "Private subnet IDs for the control plane and nodes."
 }
 
-variable "allowed_IP_addresses" {
+variable "allowed_ip_addresses" {
   type        = list(string)
-  description = "List of allowed IP addresses for the EKS cluster security group."
+  description = "List of allowed IP addresses for the EKS cluster API."
+
+  validation {
+    condition     = alltrue([for c in var.allowed_ip_addresses : can(cidrhost(c, 0))])
+    error_message = "Invalid list of IP addresses. Check your notations."
+  }
 }
 
 variable "forge_admin_iam_role_arn" {

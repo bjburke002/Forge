@@ -4,7 +4,7 @@ variable "aws_region" {
   description = "The AWS region to deploy resources in."
 }
 
-variable "allowed_IP_addresses" {
+variable "allowed_ip_addresses" {
   type        = list(string)
   description = "List of allowed IP addresses for the EKS API."
 }

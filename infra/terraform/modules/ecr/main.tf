@@ -22,7 +22,7 @@ locals {
       },
       {
         rulePriority = 2
-        description  = "Keep on the most recent build images."
+        description  = "Keep only the most recent build images."
         selection = {
           tagStatus     = "tagged"
           tagPrefixList = ["sha-"]
