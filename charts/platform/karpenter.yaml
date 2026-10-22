@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    name: karpenter
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+
+  source:
+    repoURL: oci://public.ecr.aws/karpenter/karpenter
+    targetRevision: "1.15.0"
+    path: .
+    helm:
+      valuesObject: # Setting values in-line for this chart instead of using a values file
+        settings:
+          clusterName: forge
+          interruptionQueue: forge
+        replicas: 1
+        controller:
+          resources: 
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

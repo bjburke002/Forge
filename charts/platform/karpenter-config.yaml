@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter-configs
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    name: karpenter-configs
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  
+  source:
+    repoURL: https://github.com/bjburke002/Forge.git
+    targetRevision: main
+    path: charts/karpenter-config
+
+  destination:
+    server: https://kubernetes.default.svc
+
+  syncPolicy: 
+    automated:
+      prune: true
+      selfHeal: true
