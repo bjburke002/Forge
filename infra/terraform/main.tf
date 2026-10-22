@@ -37,3 +37,8 @@ module "argocd" {
   depends_on = [module.eks]
 }
 
+module "karpenter" {
+  source = "./modules/karpenter"
+
+  cluster_name = module.eks.cluster_name
+}

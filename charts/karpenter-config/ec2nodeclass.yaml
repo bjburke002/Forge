@@ -1,0 +1,18 @@
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: karpenter
+spec:
+  role: forge-karpenter-node-role
+  amiSelectorTerms:
+    - alias: al2023@latest      # TODO: pin to version after cluster is spun up
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: forge
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: forge
+  kubelet:
+    maxPods: 110
+  tags:
+    Project: forge

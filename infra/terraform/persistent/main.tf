@@ -16,3 +16,7 @@ module "github_oidc" {
   allowed_branch             = var.allowed_branch
   ecr_repository_arn_pattern = module.ecr.ecr_repository_arn_pattern
 }
+
+resource "aws_iam_service_linked_role" "spot" {
+  aws_service_name = "spot.amazonaws.com"
+}
