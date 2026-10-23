@@ -1,0 +1,48 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd 
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    name: external-dns
+spec:
+  project: default
+
+  source:
+    repoURL: https://kubernetes-sigs.github.io/external-dns/
+    targetRevision: "1.23.0"
+    chart: external-dns
+    helm:
+      valuesObject:
+        serviceAccount:
+          create: true
+          name: "external-dns"
+        provider: 
+          name: aws
+        resources:
+          limits:
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          
+        sources: ["ingress"]
+        policy: sync 
+        txtOwnerId: "forge"
+        domainFilters: ["forgeappservices.com"]
+        env:
+          - name: AWS_DEFAULT_REGION
+            value: "us-east-1"
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: "external-dns"
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
