@@ -3,6 +3,7 @@ SHELL       := /usr/bin/env bash
 
 CLUSTER_NAME ?= forge
 AWS_REGION   ?= us-east-1
+DOMAIN       ?= forgeappservices.com
 PLAN_FILE    := tfplan
 
 .DEFAULT_GOAL := help
@@ -31,7 +32,7 @@ up: plan ## Apply the plan and configure kubectl
 	kubectl wait --for=condition=Ready nodes --all --timeout=10m
 
 down:
-	./scripts/k8s-teardown.sh "$(CLUSTER_NAME)" "$(AWS_REGION)"
+	./scripts/k8s-teardown.sh "$(CLUSTER_NAME)" "$(AWS_REGION)" "$(DOMAIN)"
 	terraform destroy -input=false
 	./scripts/check-leftovers.sh $(AWS_REGION)
 

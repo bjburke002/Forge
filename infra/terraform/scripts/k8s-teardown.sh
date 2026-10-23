@@ -3,8 +3,11 @@
 # (load balancers, EBS volumes, Karpenter nodes) so terraform destroy can remove the VPC.
 set -euo pipefail
 
-CLUSTER_NAME="${1:?usage: $0 <cluster-name> <region>}"
-REGION="${2:?usage: $0 <cluster-name> <region>}"
+USAGE="usage: $0 <cluster-name> <region> <domain>"
+CLUSTER_NAME="${1:?$USAGE}"
+REGION="${2:?$USAGE}"
+DOMAIN="${3:?$USAGE}"
+TXT_OWNER="forge" # must match txtOwnerId in charts/platform/external-dns.yaml
 
 # Nothing to clean up if the cluster is already gone (e.g. re-running after a failed destroy).
 CTX=$(aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" \
@@ -25,6 +28,24 @@ kc delete ingress --all -A --timeout=10m
 kc get svc -A -o json |
   jq -r '.items[] | select(.spec.type == "LoadBalancer") | "\(.metadata.namespace) \(.metadata.name)"' |
   while read -r ns name; do kc -n "$ns" delete svc "$name" --timeout=10m; done
+
+# Give ExternalDNS time to delete the records for those load balancers while it still
+# has a node and credentials. It removes each record together with its TXT ownership
+# record, so none of those left means it has finished.
+ZONE_ID=$(aws route53 list-hosted-zones-by-name --dns-name "$DOMAIN" --max-items 1 \
+  --query "HostedZones[?Name=='${DOMAIN}.'].Id | [0]" --output text)
+owned_records() {
+  aws route53 list-resource-record-sets --hosted-zone-id "$ZONE_ID" --output text \
+    --query "length(ResourceRecordSets[?Type=='TXT' && contains(join('', ResourceRecords[].Value), 'external-dns/owner=${TXT_OWNER}')])"
+}
+deadline=$((SECONDS + 180))
+while (( $(owned_records) > 0 )); do
+  if (( SECONDS >= deadline )); then
+    echo "Warning: ExternalDNS records remain in $DOMAIN; the next make up will adopt them."
+    break
+  fi
+  sleep 10
+done
 
 #Accounting for pods with attached PVCs
 if [[ -n "$(kc get pvc -A -o name)" ]]; then
