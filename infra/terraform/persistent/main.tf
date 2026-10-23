@@ -20,3 +20,15 @@ module "github_oidc" {
 resource "aws_iam_service_linked_role" "spot" {
   aws_service_name = "spot.amazonaws.com"
 }
+
+data "aws_route53_zone" "forge" {
+  name         = "forgeappservices.com"
+  private_zone = false
+}
+
+module "acm" {
+  source = "../modules/acm"
+
+  domain_name     = "forgeappservices.com"
+  route53_zone_id = data.aws_route53_zone.forge.zone_id
+}
