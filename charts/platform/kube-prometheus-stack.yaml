@@ -51,6 +51,12 @@ spec:
     automated:
       prune: true
       selfHeal: true
+  ignoreDifferences:
+  - kind: Secret
+    name: kube-prometheus-grafana
+    jsonPointers:
+      - /data
     syncOptions:
       - ServerSideApply=true
       - CreateNamespace=true
+      - RespectIgnoreDifferences=true
