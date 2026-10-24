@@ -15,6 +15,11 @@ spec:
     path: .
     helm:
       valuesObject:
+        prometheusOperator:
+          admissionWebhooks:
+            enabled: false
+          tls:
+            enabled: false
         kubeControllerManager:
           enabled: false
         kubeScheduler:
