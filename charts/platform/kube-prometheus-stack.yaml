@@ -43,6 +43,8 @@ spec:
               limits:
                 memory: 1Gi
         grafana:
+          admin:
+            existingSecret: grafana-admin  
           resources:
             requests:
               memory: 128Mi
@@ -53,9 +55,9 @@ spec:
     server: https://kubernetes.default.svc
     namespace: kube-prometheus    
   syncPolicy:
-    #automated:
-    #  prune: true
-    #  selfHeal: true
+    automated:
+      prune: true
+      selfHeal: true
     syncOptions:
       - ServerSideApply=true
       - CreateNamespace=true
