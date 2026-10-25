@@ -14,9 +14,12 @@ notifications:
 # Requests keep the scheduler honest on small nodes; memory limits stop one
 # component starving the add-ons. Defaults are unset ({}).
 controller:
+  env:
+    - name: "GOMEMLIMIT"
+      value: "900MiB"
   resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits:   { memory: 512Mi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits:   { memory: 1Gi }
 
 repoServer:
   resources:
