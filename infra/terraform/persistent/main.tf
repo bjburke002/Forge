@@ -32,3 +32,24 @@ module "acm" {
   domain_name     = "forgeappservices.com"
   route53_zone_id = data.aws_route53_zone.forge.zone_id
 }
+
+# Generating a random Secrets Manager key to use for Grafana-admin
+ephemeral "random_password" "grafana_admin" {
+  length           = 24
+  special          = true
+  override_special = "!@#$%&*()-_=+[]{}<>:?"
+}
+
+resource "aws_secretsmanager_secret" "grafana_admin" {
+  name = "${local.cluster_name}/grafana-admin"
+}
+
+resource "aws_secretsmanager_secret_version" "grafana_admin" {
+  secret_id = aws_secretsmanager_secret.grafana_admin.id
+  secret_string_wo = jsonencode({
+    "admin-user"     = "admin"
+    "admin-password" = ephemeral.random_password.grafana_admin.result
+  })
+
+  secret_string_wo_version = 1
+}
