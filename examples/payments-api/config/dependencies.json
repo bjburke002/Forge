@@ -1,0 +1,20 @@
+{
+    "serviceName": "payments-api",
+    "dependencies": [
+        {
+            "name": "postgres",
+            "type": "database",
+            "healthy": true
+        },
+        {
+            "name": "redis",
+            "type": "cache",
+            "healthy": true
+        },
+        {
+            "name": "billing",
+            "type": "http",
+            "healthy": true
+        }
+    ]
+}
