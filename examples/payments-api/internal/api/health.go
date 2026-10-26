@@ -7,30 +7,28 @@ import (
 	"os"
 )
 
-// JSON struct for the file
+// File is a JSON struct for the dependencies file we are feeding this program to mock dependency failure
 type File struct {
 	ServiceName  string       `json:"serviceName"`
 	Dependencies []Dependency `json:"dependencies"`
 }
 
-// JSON struct for dependencies
+// Dependency is the JSON struct for dependencies read from the file
 type Dependency struct {
 	Name    string `json:"name"`
 	Type    string `json:"type"`
 	Healthy bool   `json:"healthy"`
 }
 
+// LivenessHandler handles the app's basic liveness probe and returns http/200 if it's up
 func LivenessHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 }
 
-func RootHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte("Hello, World!"))
-}
-
+// ReadinessHandler handles readiness evaluation for the mocked dependencies. It returns a 5xx error code for
+// any in an un-ready state and a HTTP/200 if all are set to healthy
 func ReadinessHandler(path string) http.HandlerFunc {
 
 	return func(w http.ResponseWriter, r *http.Request) {
