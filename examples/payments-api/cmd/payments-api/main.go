@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"payments/internal/api"
 	"payments/internal/metrics"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -38,8 +41,8 @@ func main() {
 	mux.HandleFunc("/health/ready", api.ReadinessHandler(readyPath))
 	metricsMux.Handle("/metrics", metrics.Handler())
 
-	finish := make(chan bool) // New goroutine channel
-
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	server := &http.Server{
 		Addr:         ":8080",
 		Handler:      metrics.Middleware(mux),
@@ -60,6 +63,7 @@ func main() {
 		slog.Info("Server listening", "addr", server.Addr)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Server failed", "addr", server.Addr, "error", err)
+			os.Exit(1)
 		}
 	}()
 
@@ -67,10 +71,29 @@ func main() {
 		slog.Info("Server listening", "addr", metricsServer.Addr)
 		if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Server failed", "addr", metricsServer.Addr, "error", err)
+			os.Exit(1)
 		}
 
 	}()
-	<-finish
+	<-ctx.Done()
+	slog.Info("Shutdown signal received, stopping servers")
+
+	// Hard timeout context for the shutdown process
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Attempt to gracefully shutdown the server
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Server shutdown failed", "addr", server.Addr, "error", err)
+	} else {
+		slog.Info("Server stopped", "addr", server.Addr)
+	}
+
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+		slog.Error("Server shutdown failed", "addr", metricsServer.Addr, "error", err)
+	} else {
+		slog.Info("Server stopped", "addr", metricsServer.Addr)
+	}
 }
 
 // Rolling my own getEnv to set a fallback default value
