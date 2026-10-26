@@ -1,0 +1,71 @@
+name: 'Build and Test'
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test-go:
+    name: 'Test and build Go image'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 'examples/payments-api'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'examples/payments-api/go.mod'
+          cache-dependency-path: 'examples/payments-api/go.sum'
+      
+      - name: Verify Go Dependencies
+        run: go mod verify
+      
+      - name: Run Go Vet
+        run: go vet ./...
+      
+      - name: Run Go Test
+        run: go test ./...
+      
+      - name: Build image
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t payments-api:$IMAGE_TAG -f Dockerfile .
+  test-terraform:
+    name: 'Terraform fmt and validate'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: 'infra/terraform'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.16.6'
+      
+      - name: Terraform Format
+        run: terraform fmt -recursive -check
+
+      - name: Terraform Init and Validate - Persistent
+        run: |
+          cd persistent
+          terraform init -backend=false
+          terraform validate
+      
+      - name: Terraform Init and Validate - Root
+        run: |
+          terraform init -backend=false 
+          terraform validate
+        
