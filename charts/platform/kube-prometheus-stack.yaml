@@ -7,6 +7,8 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
   labels:
     name: kube-prometheus
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   project: default
   source:
@@ -15,6 +17,22 @@ spec:
     path: .
     helm:
       valuesObject:
+        extraManifests:
+          - apiVersion: external-secrets.io/v1
+            kind: ExternalSecret
+            metadata:
+              name: grafana-admin
+              namespace: kube-prometheus
+            spec:
+              refreshInterval: 1h0m0s
+              secretStoreRef:
+                name: aws-secrets-manager
+                kind: ClusterSecretStore
+              target:
+                name: grafana-admin
+              dataFrom:
+                - extract:
+                    key: "forge/grafana-admin"
         prometheusOperator:
           admissionWebhooks:
             enabled: false
