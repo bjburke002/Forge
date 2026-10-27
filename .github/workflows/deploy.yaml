@@ -12,6 +12,12 @@ permissions:
 
 env:
   SERVICE: 'payments-api'
+  ECR_REPOSITORY: '241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api'
+
+# One deploy at a time, so back-to-back merges bump the tag in order instead of racing.
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
 
 # One deploy at a time, so back-to-back merges bump the tag in order instead of racing.
 concurrency:
@@ -98,7 +104,7 @@ jobs:
       - name: Set image tag
         env:
           IMAGE_TAG: ${{ github.sha }}
-        run: kustomize edit set image "$SERVICE:$IMAGE_TAG"
+        run: kustomize edit set image "$SERVICE=$ECR_REPOSITORY:$IMAGE_TAG"
 
       - name: Commit and push
         env:
