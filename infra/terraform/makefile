@@ -34,7 +34,7 @@ up: plan ## Apply the plan and configure kubectl
 down:
 	./scripts/k8s-teardown.sh "$(CLUSTER_NAME)" "$(AWS_REGION)" "$(DOMAIN)"
 	terraform destroy -input=false
-	./scripts/check-leftovers.sh $(AWS_REGION)
+	./scripts/check-leftovers.sh "$(AWS_REGION)" "$(CLUSTER_NAME)"
 
 kubeconfig: ## Point kubectl at the cluster
 	aws eks update-kubeconfig --region $(AWS_REGION) --name $(CLUSTER_NAME)

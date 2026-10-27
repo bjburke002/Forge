@@ -59,6 +59,8 @@ if [[ -n "$(kc get pvc -A -o name)" ]]; then
   kc wait --for=delete pvc --all -A --timeout=10m
 fi
 
+kc delete pdb --all -A
+
 if kc get crd nodepools.karpenter.sh >/dev/null 2>&1; then
   kc delete nodepools --all --timeout=10m
 fi

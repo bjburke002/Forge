@@ -18,6 +18,9 @@ spec:
         - key: "karpenter.k8s.aws/instance-cpu"
           operator: In
           values: ["2", "4"]
+        - key: "karpenter.k8s.aws/instance-memory"
+          operator: Gt
+          values: ["3071"]
       expireAfter: 24h
       nodeClassRef:
         group: karpenter.k8s.aws
