@@ -5,6 +5,11 @@ resources:
 - payments-service.yaml
 - payments-ingress.yaml
 - payments-servicemonitor.yaml
+- payments-pdb.yaml
+- payments-hpa.yaml
+- payments-sa.yaml
+- payments-networkpolicy.yaml
+
 configMapGenerator:
 - files:
   - dependencies.json

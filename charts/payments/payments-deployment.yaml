@@ -5,7 +5,6 @@ metadata:
   labels:
     app: payments
 spec:
-  replicas: 2
   selector:
     matchLabels:
       app: payments
@@ -63,6 +62,7 @@ spec:
             preStop:
               sleep:
                 seconds: 15
+      serviceAccountName: payments-sa
       volumes:
         - name: dependencies
           configMap:
