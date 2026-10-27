@@ -14,4 +14,5 @@ configMapGenerator:
 
 images:
 - name: payments-api
-  newTag: a5148b68efb91de9ba22c12465506813648a5b54
+  newName: 241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api
+  newTag: f4bdd2be1076cf64fc4b8b2b81d3b4caa820b926
