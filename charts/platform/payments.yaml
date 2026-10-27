@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: payments
+  namespace: argocd
+  finalizers: 
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    name: payments
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/bjburke002/Forge.git
+    targetRevision: main
+    path: charts/payments
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: payments
+  
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+      refresh: true
