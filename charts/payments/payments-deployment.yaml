@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: payments-Deployment
+  name: payments-deployment
   labels:
     app: payments
 spec:
