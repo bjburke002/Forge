@@ -19,6 +19,11 @@ concurrency:
   group: deploy-${{ github.workflow }}
   cancel-in-progress: false
 
+# One deploy at a time, so back-to-back merges bump the tag in order instead of racing.
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   build-and-test-go:
     name: 'Test and build Go code'

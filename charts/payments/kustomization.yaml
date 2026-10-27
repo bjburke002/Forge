@@ -1,18 +1,17 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - payments-deployment.yaml
-  - payments-service.yaml
-  - payments-ingress.yaml
-  - payments-servicemonitor.yaml
+- payments-deployment.yaml
+- payments-service.yaml
+- payments-ingress.yaml
+- payments-servicemonitor.yaml
 configMapGenerator:
-  - name: payments-dependencies-cm
-    files:
-      - dependencies.json
-    options:
-      disableNameSuffixHash: true
+- files:
+  - dependencies.json
+  name: payments-dependencies-cm
+  options:
+    disableNameSuffixHash: true
 
 images:
-  - name: payments-api
-    newName: 241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api
-    newTag: acd2328c0281399dc9d5dab51d694b938cc33051
+- name: payments-api
+  newTag: a5148b68efb91de9ba22c12465506813648a5b54
