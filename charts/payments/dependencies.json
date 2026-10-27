@@ -4,12 +4,12 @@
         {
             "name": "postgres",
             "type": "database",
-            "healthy": false
+            "healthy": true
         },
         {
             "name": "redis",
             "type": "cache",
-            "healthy": false
+            "healthy": true
         },
         {
             "name": "billing",
