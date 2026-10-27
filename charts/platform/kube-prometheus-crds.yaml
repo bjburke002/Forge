@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-crds
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    name: kube-prometheus-crds
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: oci://ghcr.io/prometheus-community/charts/prometheus-operator-crds
+    targetRevision: "32.0.1"
+    path: .
+    helm:
+      valuesObject:
+        crds:
+          annotations:
+            argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated: 
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

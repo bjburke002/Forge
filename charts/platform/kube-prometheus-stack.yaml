@@ -17,6 +17,8 @@ spec:
     path: .
     helm:
       valuesObject:
+        crds:
+          enabled: false
         extraManifests:
           - apiVersion: external-secrets.io/v1
             kind: ExternalSecret
