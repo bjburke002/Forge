@@ -27,6 +27,8 @@ spec:
           env:
             - name: READINESS_FILE
               value: /etc/payments-api/dependencies.json
+            - name: ERROR_RATE
+              value: '0.1'
           volumeMounts:
             - name: dependencies
               mountPath: /etc/payments-api
@@ -62,7 +64,7 @@ spec:
           lifecycle:
             preStop:
               sleep:
-                seconds: 5
+                seconds: 15
       volumes:
         - name: dependencies
           configMap:
