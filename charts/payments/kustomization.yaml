@@ -6,7 +6,7 @@ resources:
   - payments-ingress.yaml
   - payments-servicemonitor.yaml
 configMapGenerator:
-  - name: payment-dependencies-cm
+  - name: payments-dependencies-cm
     files:
       - dependencies.json
     options:
