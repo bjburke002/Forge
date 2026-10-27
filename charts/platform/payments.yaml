@@ -22,6 +22,9 @@ spec:
     namespace: payments
   
   syncPolicy:
+    managedNamespaceMetadata:
+      labels:
+        elbv2.k8s.aws/pod-readiness-gate-inject: enabled
     automated:
       prune: true
       selfHeal: true

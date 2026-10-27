@@ -13,6 +13,11 @@ permissions:
 env:
   SERVICE: 'payments-api'
 
+# One deploy at a time, so back-to-back merges bump the tag in order instead of racing.
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   build-and-test-go:
     name: 'Test and build Go code'
@@ -72,3 +77,38 @@ jobs:
         run: |
           docker build -t "$REGISTRY/forge/$SERVICE:$IMAGE_TAG" .
           docker push "$REGISTRY/forge/$SERVICE:$IMAGE_TAG"
+
+  # Updating kustomization.yaml in place here to completely automate the rollout process on new image SHA
+  update-manifests:
+    name: 'Bump image tag in manifests'
+    runs-on: ubuntu-latest
+    needs: build-and-push-docker-image
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: 'charts/payments'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with: 
+          ssh-key: ${{secrets.DEPLOY_KEY}}
+
+      - name: Set image tag
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: kustomize edit set image "$SERVICE:$IMAGE_TAG"
+
+      - name: Commit and push
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          git config user.name 'forge-deploy-bot'
+          git config user.email '41898282+forge-deploy-bot@users.noreply.github.com'
+          git add kustomization.yaml
+          # Nothing to commit if this SHA is already deployed (e.g. a re-run).
+          git diff --cached --quiet && exit 0
+          git commit -m "deploy($SERVICE): $IMAGE_TAG"
+          git pull --rebase
+          git push
