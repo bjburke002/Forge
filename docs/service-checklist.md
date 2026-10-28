@@ -64,7 +64,7 @@ payments-api also mounts a dependency file from a ConfigMap (`READINESS_FILE`, g
 
 ### 2.3 Ingress
 
-Rendered only when `ingress.enabled` is true.
+Rendered only when the `ingress` block is present; there is no `enabled` flag.
 
 | Setting | Class | Value |
 |---|---|---|
@@ -129,7 +129,7 @@ Proven in both directions: from `default` to 8080 times out; from `kube-promethe
 
 ### 2.8 ServiceMonitor
 
-Rendered only when `observability.metrics` is true.
+Rendered for every service: metrics are mandatory, so there is no switch.
 
 | Setting | Class | Value |
 |---|---|---|
