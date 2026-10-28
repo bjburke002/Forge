@@ -7,6 +7,8 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
   labels:
     name: aws-load-balancer-controller
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
 spec:
   project: default
 
@@ -30,25 +32,13 @@ spec:
         serviceAccount:
           name: aws-load-balancer-controller
         enableServiceMutatorWebhook: false
+        enableCertManager: true
   destination: 
     server: https://kubernetes.default.svc
     namespace: kube-system
-  ignoreDifferences:
-    - kind: Secret
-      name: aws-load-balancer-tls
-      namespace: kube-system
-      jsonPointers: [/data]
-    - group: admissionregistration.k8s.io
-      kind: MutatingWebhookConfiguration
-      name: aws-load-balancer-webhook
-      jqPathExpressions: ['.webhooks[].clientConfig.caBundle']
-    - group: admissionregistration.k8s.io
-      kind: ValidatingWebhookConfiguration
-      name: aws-load-balancer-webhook
-      jqPathExpressions: ['.webhooks[].clientConfig.caBundle']
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
