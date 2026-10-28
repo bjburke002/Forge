@@ -3,7 +3,8 @@ kind: PodDisruptionBudget
 metadata:
   name: payments-pdb
 spec:
-  minAvailable: 1
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels:
       app: payments
