@@ -1,0 +1,31 @@
+apiVersion: forge.dev/v1alpha1
+kind: ForgeService
+metadata:
+  name: payments
+spec:
+  owner: payments-team
+  image: 241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api:latest
+  runtime:
+    port: 8080
+  env:
+    - name: LOG_LEVEL
+      value: info
+  scaling:
+    minReplicas: 2
+    maxReplicas: 5
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  ingress:
+    host: payments.forgeappservices.com
+  health:
+    readiness: /health/ready
+    liveness: /health/live
+  observability:
+    metricsPort: 9090
+  slo:
+    availability: "99.9"
+    latencyP99Ms: 500

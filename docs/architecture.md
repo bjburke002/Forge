@@ -157,13 +157,15 @@ Revision 2 chose Pulumi with Go so that the infrastructure code could share the 
 In practice that coupling was thin. The contract describes workloads, and the AWS foundation — VPC, EKS, IAM, ECR, Route 53 — barely depends on its shape. The one per-service AWS concern, IAM access for a service that calls AWS, is defined in Terraform against the ServiceAccount the controller renders (§13), not derived from the contract. The contract is still defined once and still shared by every layer that handles workloads:
 
 ```text
-// pkg/contract/v1/types.go — defined once
+// pkg/contract/v1alpha1/types.go — defined once
 type ForgeServiceSpec struct {
+    Owner         string            `json:"owner"`
+    Image         string            `json:"image"`
     Runtime       RuntimeSpec       `json:"runtime"`
     Env           []EnvVar          `json:"env,omitempty"` // Forge's own name/value type, not corev1.EnvVar
     Scaling       ScalingSpec       `json:"scaling"`
     Resources     ResourceSpec      `json:"resources"`
-    Ingress       *IngressSpec      `json:"ingress,omitempty"`
+    Ingress       *IngressSpec      `json:"ingress,omitempty"` // absent: no Ingress is rendered
     Health        HealthSpec        `json:"health"`
     Observability ObservabilitySpec `json:"observability"`
     SLO           *SLOSpec          `json:"slo,omitempty"`
@@ -270,8 +272,7 @@ spec:
     requests: { cpu: 250m, memory: 256Mi }
     limits:   { memory: 512Mi }     # memory only; there is no CPU limit field
 
-  ingress:
-    enabled: true
+  ingress:                      # omit the block for a service with no Ingress
     host: payments.example.com  # always HTTPS; ACM cert found by host match
     path: /
 
@@ -279,9 +280,8 @@ spec:
     readiness: /health/ready
     liveness:  /health/live
 
-  observability:
-    metrics: true               # generates a ServiceMonitor
-    metricsPath: /metrics
+  observability:                # required: every service exposes Prometheus metrics
+    metricsPath: /metrics       # default /metrics
     metricsPort: 9090           # separate from runtime.port; never exposed
 
   slo:
@@ -610,7 +610,7 @@ Run Kyverno in Audit mode first and read the policy reports before switching to 
 Application  --> /metrics (Prometheus client library)
      |
      v
-ServiceMonitor  (rendered by the controller when observability.metrics: true)
+ServiceMonitor  (rendered by the controller for every service)
      |
      v
 Prometheus  <-- ALB target-group metrics via CloudWatch exporter
@@ -622,7 +622,7 @@ Prometheus  <-- ALB target-group metrics via CloudWatch exporter
 Grafana  --> per-service dashboard, generated from a template
 ```
 
-Every Forge service receives, with no configuration beyond observability.metrics: true:
+Every Forge service receives, with no configuration beyond observability.metricsPort:
 
 - Request rate, error rate, and latency percentiles at the load balancer.
 - CPU and memory against requests and limits.
