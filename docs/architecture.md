@@ -306,7 +306,7 @@ status:
 
 **Note what is absent.** No mention of ALB, Route 53, node types, availability zones, or IAM trust policies. A developer cannot express an AWS-specific concept through this contract, which is what makes the abstraction real rather than decorative.
 
-**Note what is not here: AWS access.** The contract has no field for AWS permissions. Granting them means creating an IAM role and a Pod Identity association, which are AWS resources, and the controller only ever writes Kubernetes objects (§7). A service that calls AWS gets its role from Terraform instead, bound to the ServiceAccount the controller renders, <svc>-sa in the service's namespace; that name is the whole interface between the two. Because AWS permissions are a privilege-escalation path, routing every grant through a reviewed Terraform change is the approval gate this needs anyway. The design is recorded in docs/adr/0001-per-service-aws-access.md.
+**Note what is not here: AWS access.** The contract has no field for AWS permissions. Granting them means creating an IAM role and a Pod Identity association, which are AWS resources, and the controller only ever writes Kubernetes objects (§7). A service that calls AWS gets its role from Terraform instead, bound to the ServiceAccount the controller renders, <svc>-sa in the service's namespace; that name is the whole interface between the two. Because AWS permissions are a privilege-escalation path, routing every grant through a reviewed Terraform change is the approval gate this needs anyway. Design: one file per service that needs AWS (infra/terraform/services/<svc>.yaml, listing its namespaces and policy statements), read by a service-identity module that creates the role, an inline policy and one Pod Identity association per namespace. To settle when it is built: a permissions boundary on every service role, and one role per environment rather than per service.
 
 **Reference implementation.** Phase 3 built one service, payments-api, by hand to find out exactly what the controller must produce. The service itself sets the bar every golden-path service meets: liveness that checks nothing but the process, readiness that reflects dependencies, metrics on a separate port that the ALB never exposes, request metrics labelled by matched route with health checks excluded, graceful shutdown on SIGTERM, JSON logs, and a distroless non-root image. What it needed from Kubernetes, split into what comes from the contract and what the platform fixes:
 
@@ -768,11 +768,11 @@ forge/
 ├── .github/workflows/          # build-and-test (PRs), deploy (main)
 ├── policies/kyverno/
 ├── observability/
-├── docs/adr/
+├── docs/                       # architecture, service checklist, contract decisions
 └── README.md
 ```
 
-Three structural notes. First, there is no charts/forge-service — application rendering belongs to the controller, and keeping a parallel Helm implementation is the duplication §2 removed; charts/payments is the hand-written specification the controller will reproduce, not a template. Second, the sample service is its own Go module, so its dependencies stay out of the platform's. Third, docs/adr exists because several decisions in this document are contested and worth a paragraph each: Terraform modules over Pulumi, controller over Helm, success rate over readiness, no REST API, single NAT gateway, ESO over CSI driver, one workload account under an Organization, and sync waves ordered by capacity.
+Three structural notes. First, there is no charts/forge-service — application rendering belongs to the controller, and keeping a parallel Helm implementation is the duplication §2 removed; charts/payments is the hand-written specification the controller will reproduce, not a template. Second, the sample service is its own Go module, so its dependencies stay out of the platform's. Third, there is no separate ADR folder. The contested decisions are argued in place in this document, and the contract decisions are logged with their reasoning in docs/service-contract-decisions.md. The contested ones are: Terraform modules over Pulumi, controller over Helm, success rate over readiness, no REST API, single NAT gateway, ESO over CSI driver, one workload account under an Organization, and sync waves ordered by capacity.
 
 ## 22. Cost Model
 
@@ -871,7 +871,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 |---|---|---|
 | Terraform bootstrap chicken-and-egg | Resolved | The persistent root (OIDC provider, CI role, ECR template) is applied locally with Identity Center admin credentials. CI only builds and pushes images and never runs Terraform, so there is no loop. If CI later runs terraform plan, it gets a separate read-only role. |
 | Terraform state backend | Decided | S3 backend with native state locking (use_lockfile); no DynamoDB table, since DynamoDB locking is deprecated. The state bucket is created once outside the main configuration and survives teardown. |
-| OpenTelemetry tracing | Deferred | Metrics and SLOs fit the budget; a trace backend does not. Document the extension point in the ADR. |
+| OpenTelemetry tracing | Deferred | Metrics and SLOs fit the budget; a trace backend does not. The extension point is recorded here. |
 | Contract versioning and conversion | Deferred | Shipping v1alpha1 with an explicit no-compatibility-guarantee note. Conversion webhooks only after the schema stabilizes. |
 | Cluster upgrade procedure | Open | Exercised implicitly by teardown and rebuild. The STANDARD upgrade policy upgrades the control plane at the end of standard support; node AMIs are pinned in the EC2NodeClass and bumped deliberately. Write it up in Phase 9 as a runbook. |
 | Secrets rotation | Deferred | ESO refresh interval handles propagation; rotation policy in Secrets Manager is out of scope. |
@@ -880,7 +880,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | Multi-architecture images | Deferred | The NodePool is restricted to amd64 until CI builds multi-architecture images. Graviton instances would then lower compute cost. |
 | Second runtime: ECS on Fargate | Future | Keep EKS as the control plane; the controller renders AWS Controllers for Kubernetes (ACK) resources for services placed on ECS, so it still only writes Kubernetes objects. Open design question: the shared ALB, which the Load Balancer Controller owns. Estimate 80 to 120 hours for parity, 25 to 35 for a proof of concept behind its own ALB. |
 | Golden paths for other languages (.NET first) | Future | The contract is language-neutral and must stay so. A second language needs a forge create template, a CI workflow variant (tests and dependency scanning; build, scan, sign and push stay shared) and a minimal base image. Estimate 10 to 15 hours. |
-| AWS access for services | Decided | Not part of the contract. A service that calls AWS gets an IAM role and Pod Identity association from Terraform, bound to its ServiceAccount (<svc>-sa in its namespace). The controller stays limited to Kubernetes objects (§7), and every AWS permission goes through a reviewed Terraform change. ACK remains an option if self-service AWS access is ever wanted. Design recorded in ADR 0001; built when the first service needs AWS access. |
+| AWS access for services | Decided | Not part of the contract. A service that calls AWS gets an IAM role and Pod Identity association from Terraform, bound to its ServiceAccount (<svc>-sa in its namespace). The controller stays limited to Kubernetes objects (§7), and every AWS permission goes through a reviewed Terraform change. ACK remains an option if self-service AWS access is ever wanted. Built when the first service needs AWS access; the design is in §9. |
 | GitOps repository credential | Open | The workflow token cannot push to another repository. Phase 5 needs a deploy key on the GitOps repository or a GitHub App. |
 | terraform plan in CI | Deferred | Needs a separate read-only role with state access. Only the persistent root's plan is meaningful; the main root is usually torn down. |
 | Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and, from Phase 4, the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Scheduled just before Phase 4. |
@@ -908,7 +908,7 @@ The control plane is not built first. The golden path is proven by hand, then th
 6. Kyverno to Enforce, with image verification bound to the signing identity from step 5.
 7. Observability and the SLO implementation: recording rules, error budget, burn-rate alerts, generated dashboards.
 8. The CLI, deliberately last and deliberately thin. By this point it is a convenience layer over things that already work.
-9. Failure testing, operational runbooks, and the ADRs.
+9. Failure testing and operational runbooks.
 
 > **Why the controller moved from last to fourth.** In Revision 1 the controller was Phase 8 of 9 — the first thing to be cut when time ran short, and the component that defines the platform. Here it is built immediately after the golden path is proven, and the CLI absorbs the schedule risk instead. Without the CLI, Forge is still a Kubernetes-native platform; without the controller, it is a collection of hand-written manifests.
 
