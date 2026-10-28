@@ -63,6 +63,14 @@ spec:
               sleep:
                 seconds: 15
       serviceAccountName: payments-sa
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: payments
+          matchLabelKeys: [pod-template-hash]
       volumes:
         - name: dependencies
           configMap:
