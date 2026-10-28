@@ -28,8 +28,8 @@ baked in.
                                     ▲
     GitHub Actions ──> ECR ──> image tag commit
 
-See the [architecture document](docs/) for the full design and [`docs/adr/`](docs/adr/)
-for decisions.
+See the [architecture document](docs/architecture.md) for the full design and the
+[contract decisions](docs/service-contract-decisions.md) for how the service contract was settled.
 
 ## Repository layout
 
