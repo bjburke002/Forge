@@ -1,0 +1,194 @@
+# Service Checklist
+
+*Phase 3, task 3.4. Derived from payments-api (`examples/payments-api`, `charts/payments`), where every item below was built by hand and proven in the cluster. Status: draft for review.*
+
+This is the specification for what the Phase 4 controller renders for every ForgeService (kind `ForgeService`, group `forge.dev`, short name `fsvc`). Each setting is classified as one of:
+
+- **Contract**: the developer supplies it in the ForgeService resource (§9 of the architecture).
+- **Platform**: fixed by Forge; it never appears in a developer's Service.
+- **Derived**: computed by the controller from contract fields or controller configuration.
+
+The table in architecture §9 summarises this per resource. This document is the field-level detail, plus what a service depends on but never declares. The decisions behind it are recorded in [service-contract-decisions.md](service-contract-decisions.md).
+
+`<svc>` below means the ForgeService's `metadata.name` (payments: `payments`). It is the only naming input. Every rendered resource is named `<svc>-<kind>` so the name says what the resource is, and carries three labels: `app: <svc>`, `app.kubernetes.io/name: <svc>` and `app.kubernetes.io/managed-by: forge`. Every selector uses `app: <svc>` only.
+
+## 1. Application requirements
+
+A service must meet these before the platform can run it. They are checked by review and the golden-path template, not by the controller.
+
+| Requirement | Why |
+|---|---|
+| Liveness endpoint that checks only the process (payments: `/health/live`) | A dependency outage must not restart every pod. |
+| Readiness endpoint that reflects dependencies (payments: `/health/ready`) | Removes a pod from the ALB without restarting it. |
+| Metrics on a separate port (payments: 9090), never the application port | The ALB routes only the application port, so metrics are never public. |
+| Request metrics labelled by matched route, with health checks excluded | Bounded cardinality, and probes don't dilute the success rate the SLOs use. |
+| Graceful shutdown on SIGTERM within 10 s | Fits the 30 s grace period after the 15 s preStop sleep (§2.1). |
+| Runs as a non-root user with a read-only root filesystem | Enforced by the rendered security context; an image that needs root fails to start. |
+| Built for amd64 | The NodePool only offers amd64 until CI builds multi-architecture images. |
+| Structured logs to stdout | Collected without per-service configuration. |
+
+## 2. Rendered resources
+
+### 2.1 Deployment
+
+| Setting | Class | Value |
+|---|---|---|
+| Name, labels, selector | Derived | `<svc>-deployment`; label `app: <svc>` on the Deployment and pod template; selector on the same label |
+| `replicas` | Platform | **Omitted.** The HPA owns the count; a value in Git makes Argo CD's self-heal fight the HPA |
+| Image | Contract | `spec.image`, rendered as the full ECR reference |
+| Container ports | Contract | `http` = `runtime.port`; `metrics` = `observability.metricsPort` |
+| Environment variables | Contract | `spec.env`: a list of `name` and `value` pairs, rendered in order into the container's `env`. Plain values only: no `valueFrom`, no secrets |
+| Resource requests | Contract | Required; CPU and memory |
+| Memory limit | Contract | Required |
+| CPU limit | Platform | **None, and the contract has no field for one.** A CPU limit throttles the service even when the node has idle CPU, while requests already guarantee each service its share and drive scheduling and the HPA |
+| Liveness probe | Contract (path) + Platform (timing) | `httpGet` on `health.liveness`, port `http`; initial delay 10 s, period 10 s, timeout 5 s, failure threshold 3 |
+| Readiness probe | Contract (path) + Platform (timing) | `httpGet` on `health.readiness`, port `http`; initial delay 2 s, period 10 s, timeout 5 s, failure threshold 3 |
+| Pod security context | Platform | `runAsNonRoot: true`, `runAsUser: 65532` (an integer), seccomp `RuntimeDefault` |
+| Container security context | Platform | `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, capabilities drop `ALL` |
+| `/tmp` | Platform | Writable `emptyDir` at `/tmp`. **Not yet proven:** payments doesn't need it; required for runtimes such as .NET and Java (architecture §16.1) |
+| preStop | Platform | `lifecycle.preStop.sleep.seconds: 15`, so a terminating pod keeps serving until the ALB has deregistered it |
+| Termination grace period | Platform | Default 30 s. Budget: 15 s preStop + 10 s application shutdown |
+| ServiceAccount | Derived | `serviceAccountName: <svc>-sa`, set at **pod** level |
+| Topology spread | Platform | One constraint: `maxSkew: 1`, `topologyKey: kubernetes.io/hostname`, `whenUnsatisfiable: ScheduleAnyway`, `labelSelector` `app: <svc>`, `matchLabelKeys: [pod-template-hash]`. Keeps replicas on different nodes where possible, so one spot interruption cannot take every pod. **Not yet on payments** |
+
+payments-api also mounts a dependency file from a ConfigMap (`READINESS_FILE`, generated by Kustomize without a name hash, mounted without `subPath`). That is a test fixture for exercising readiness, not a platform feature, and the controller does not render it.
+
+### 2.2 Service
+
+| Setting | Class | Value |
+|---|---|---|
+| Name, label, selector | Derived | `<svc>-service`, `app: <svc>` |
+| Type | Platform | `ClusterIP` |
+| Port `http` | Platform | 80 → target port `http` |
+| Port `metrics` | Derived | `observability.metricsPort` → target port `metrics` |
+
+### 2.3 Ingress
+
+Rendered only when `ingress.enabled` is true.
+
+| Setting | Class | Value |
+|---|---|---|
+| Name | Derived | `<svc>-ingress` |
+| `ingressClassName` | Platform | `alb` |
+| Host | Contract | `ingress.host`; must fall under the platform domain (controller configuration) |
+| Path | Contract | `ingress.path`, `pathType: Prefix`, backend port `http` |
+| `group.name` | Platform | `forge-shared`: every service shares one ALB |
+| `group.order` | Platform | **Omitted.** Each service has a unique host, so rules from different services never match the same request ([decision 5](service-contract-decisions.md)) |
+| `scheme` | Platform | `internet-facing` |
+| `target-type` | Platform | `ip`, which is what makes readiness gates possible |
+| `listen-ports` | Platform | `[{"HTTP":80},{"HTTPS":443}]` |
+| `ssl-redirect` | Platform | `'443'` |
+| `healthcheck-path` | Contract | `health.readiness`, so the ALB and Kubernetes agree on readiness |
+| TLS certificate | Platform | None specified. The LB Controller discovers the ACM wildcard certificate by host |
+| Metrics | Platform | **Never routed.** Only the `http` port appears in the Ingress |
+
+### 2.4 HorizontalPodAutoscaler
+
+| Setting | Class | Value |
+|---|---|---|
+| API version | Platform | `autoscaling/v2` |
+| Name | Derived | `<svc>-hpa` |
+| Target | Derived | The Deployment |
+| `minReplicas`, `maxReplicas` | Contract | `scaling.minReplicas`, `scaling.maxReplicas`. The maximum doubles as a per-service cost cap |
+| CPU target | Contract | `scaling.targetCPUUtilization`, measured against the CPU **request** |
+
+### 2.5 PodDisruptionBudget
+
+| Setting | Class | Value |
+|---|---|---|
+| Name | Derived | `<svc>-pdb` |
+| Selector | Derived | `app: <svc>` |
+| Budget | Platform | `maxUnavailable: 1` |
+| `unhealthyPodEvictionPolicy` | Platform | `AlwaysAllow`, so a pod that is crash-looping or not Ready never blocks a drain |
+
+**Why `maxUnavailable`, not `minAvailable` (decided 2026-10-27).** `minAvailable: 1` blocks every voluntary eviction when a service runs one replica, so drains, Karpenter consolidation and teardown hang; and once the HPA has scaled out, it lets a drain take all but one pod at once. `maxUnavailable: 1` never deadlocks, allows single-replica services such as dev environments, and moves one pod at a time at any scale. The cost is slower drains and consolidation, which is acceptable at this scale.
+
+Teardown deletes every PDB before removing NodePools, so generated PDBs need nothing extra for teardown.
+
+### 2.6 ServiceAccount
+
+| Setting | Class | Value |
+|---|---|---|
+| Name | Derived | `<svc>-sa`, label `app: <svc>`. This name, in the service's namespace, is what Terraform binds an IAM role to when the service calls AWS, so it must stay stable |
+| `automountServiceAccountToken` | Platform | `false`; services don't call the Kubernetes API |
+| `imagePullSecrets` | Platform | None; nodes pull from ECR with the node role |
+| Annotations | Platform | None; Pod Identity is an AWS-side association, not the IRSA annotation |
+
+### 2.7 NetworkPolicy
+
+| Setting | Class | Value |
+|---|---|---|
+| Name | Derived | `<svc>-networkpolicy` |
+| Pod selector | Derived | `app: <svc>` |
+| Policy types | Platform | `Ingress` only |
+| `http` port | Platform | From the public subnets' `ipBlock`s (currently `10.20.0.0/24`, `10.20.1.0/24`, where the ALB's interfaces live). Not the VPC `/16`: pods also take VPC addresses. CIDRs come from controller configuration |
+| `metrics` port | Platform | From `namespaceSelector: kubernetes.io/metadata.name: kube-prometheus` |
+| Egress | — | None yet. Adding any rule makes egress default-deny, so DNS to CoreDNS must then be allowed explicitly |
+
+Proven in both directions: from `default` to 8080 times out; from `kube-prometheus` to 9090 succeeds.
+
+### 2.8 ServiceMonitor
+
+Rendered only when `observability.metrics` is true.
+
+| Setting | Class | Value |
+|---|---|---|
+| Name | Derived | `<svc>-servicemonitor` |
+| Selector | Derived | `app: <svc>` |
+| Endpoint | Contract | Port `metrics`, path `observability.metricsPath` |
+| Interval, timeout | Platform | 15 s, 10 s |
+| Release label | Platform | None needed; Prometheus selects ServiceMonitors from every namespace |
+
+### 2.9 Namespace and Argo CD Application
+
+| Setting | Class | Value |
+|---|---|---|
+| Namespace | Derived | One per service (per environment from Phase 5) |
+| Namespace label | Platform | `elbv2.k8s.aws/pod-readiness-gate-inject: enabled` (via `managedNamespaceMetadata`), so pods count as Ready only once the ALB reports their target healthy |
+| Sync wave | Platform | `"2"`: after the monitoring stack (wave 1) and its CRDs (wave 0) |
+| Sync policy | Platform | Automated with prune and self-heal, `CreateNamespace=true`, `retry` with backoff, the resources finalizer |
+
+In Phase 5 the ApplicationSet generates these; until then they are hand-written in `charts/platform`.
+
+### 2.10 Image tag delivery
+
+CI sets the image with the full form, `kustomize edit set image "<svc>=<ecr-repo>:<sha>"`. The short `name:tag` form drops the repository and Kubernetes pulls from Docker Hub. This moves to the GitOps repository in Phase 5.
+
+## 3. Platform prerequisites
+
+A service's manifests depend on these without naming them. When one is missing or unhealthy, the failure appears in the service: on 2026-10-27 an LB Controller certificate problem blocked the payments Ingress although nothing in payments was wrong.
+
+| What the service needs | Depends on |
+|---|---|
+| Ingress accepted | LB Controller validating webhook (`vingress`), with its certificate issued by cert-manager |
+| Readiness gates injected into pods | LB Controller pod mutating webhook (same certificate) |
+| ALB and target registration | LB Controller; IngressGroup `forge-shared` |
+| DNS record | ExternalDNS (source `ingress`, domain filter, owner ID `forge`) |
+| HTTPS | ACM wildcard and apex certificate from the persistent Terraform root |
+| ServiceMonitor | prometheus-operator CRDs (`kube-prometheus-crds`); Prometheus with an empty selector |
+| HPA | metrics-server (EKS add-on) |
+| NetworkPolicy enforced | VPC CNI with `enableNetworkPolicy = "true"`; otherwise policies are accepted and ignored |
+| Pods scheduled | Karpenter NodePool: amd64, at least 4 GiB of memory per node |
+| Image pull | ECR repository, node role |
+| AWS API access (none for payments) | An IAM role and Pod Identity association in Terraform for `<svc>-sa` in the service's namespace; not part of the contract |
+| Secrets (none for payments yet) | External Secrets and the `aws-secrets-manager` ClusterSecretStore, limited to `forge/*` |
+
+## 4. Verification
+
+How to check a service until the controller has its own tests. The last column records what has actually been exercised on payments.
+
+| Check | How | Proven on payments |
+|---|---|---|
+| Rollout without errors | Request loop against the host during repeated rollouts; no non-200 responses | Yes |
+| Readiness | Mark a dependency unhealthy in the ConfigMap; the pod leaves the ALB without restarting | Yes |
+| Metrics | Series present in Prometheus; `/health/*` absent; injected error rate (`ERROR_RATE=0.1`) measured at about 11% | Yes |
+| NetworkPolicy | Both directions, as in §2.7 | Yes |
+| TLS and DNS | `https://<host>` resolves and presents the ACM certificate; HTTP redirects to HTTPS | Yes |
+| Metrics not public | `https://<host>/metrics` is not served | Not yet |
+| HPA | Scales out under load and back to `minReplicas` | Not yet |
+| PDB | `kubectl drain` evicts one pod at a time, waiting for its replacement to be Ready before the next | Not yet |
+| Topology spread | With two replicas, `kubectl get pods -o wide` shows them on different nodes | Not yet |
+
+## 5. Decisions
+
+The decisions behind this checklist (names and labels, `env`, CPU limits, the PDB, `group.order`, `ingress.tls`, topology spread, AWS access, account-specific values and the kind name) are recorded in [service-contract-decisions.md](service-contract-decisions.md).

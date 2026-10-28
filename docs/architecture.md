@@ -92,7 +92,8 @@ Revision 2.3 (October 2026) records the rest of Phase 2 and the Phase 3 golden p
 - Rollouts are zero-downtime: a preStop sleep plus ALB readiness gates (§11).
 - ExternalDNS runs in sync mode, and teardown waits for it to remove its records (§12).
 - External Secrets is implemented, with secret values that never enter Terraform state (§13).
-- Argo CD sync waves are ordered by capacity, and charts follow a set of rules for running under Argo CD (§14).
+- Argo CD sync waves are ordered by capacity, the monitoring CRDs install from their own Application, cert-manager issues in-cluster webhook certificates, and charts follow a set of rules for running under Argo CD (§14).
+- Karpenter nodes have a memory floor, and teardown checks for every resource type that has been left behind (§10.3, §22).
 - CI/CD is built: required pull request checks, and a deploy workflow that commits the new image tag. Service manifests live in this repository until the GitOps repository arrives in Phase 5 (§15).
 - The VPC CNI enforces NetworkPolicies (§10.2, §16.1).
 
@@ -136,9 +137,10 @@ The useful consequence is that "stands up from nothing and tears down cleanly" b
 | Container platform | Amazon EKS | Managed control plane on Kubernetes 1.36, upgrade policy STANDARD. See §10.2 and §22 on extended-support pricing. |
 | Node provisioning | Karpenter | v1.15. Spot-first capacity provisioned against actual pod requirements, with hard CPU and memory limits. |
 | Platform packaging | Helm | Platform components only, installed by Argo CD from charts/platform. Not used for application workloads. |
-| Application rendering | Forge controller (Go) | Reconciles the Service CRD into Kubernetes resources. |
+| Application rendering | Forge controller (Go) | Reconciles the ForgeService CRD into Kubernetes resources. |
 | Deployment | Argo CD | Sole writer to the cluster. ApplicationSet generates per-service Applications. |
 | Ingress | AWS Load Balancer Controller | Shared ALB across services via IngressGroup. |
+| In-cluster certificates | cert-manager | v1.21. Issues admission webhook certificates inside the cluster; public TLS stays on ACM. |
 | DNS and TLS | Route 53 + ExternalDNS + ACM | Automated records; ACM certificates terminated at the ALB. |
 | Workload identity | EKS Pod Identity | Short-lived least-privilege credentials. No static keys in pods. |
 | Registry | Amazon ECR | Repositories created on first push from a template: immutable tags, scanning, lifecycle rules. |
@@ -152,12 +154,13 @@ The useful consequence is that "stands up from nothing and tears down cleanly" b
 
 Revision 2 chose Pulumi with Go so that the infrastructure code could share the contract type too. This revision drops that in favor of Terraform, and the cost should be stated plainly rather than argued away: the AWS foundation no longer type-checks against the contract.
 
-In practice that coupling was thin. The contract describes workloads, and the AWS foundation — VPC, EKS, IAM, ECR, Route 53 — barely depends on its shape: per-service IAM roles come from the controller via awsAccess, not from the infrastructure code. The contract is still defined once and still shared by every layer that handles workloads:
+In practice that coupling was thin. The contract describes workloads, and the AWS foundation — VPC, EKS, IAM, ECR, Route 53 — barely depends on its shape. The one per-service AWS concern, IAM access for a service that calls AWS, is defined in Terraform against the ServiceAccount the controller renders (§13), not derived from the contract. The contract is still defined once and still shared by every layer that handles workloads:
 
 ```text
 // pkg/contract/v1/types.go — defined once
-type ServiceSpec struct {
+type ForgeServiceSpec struct {
     Runtime       RuntimeSpec       `json:"runtime"`
+    Env           []EnvVar          `json:"env,omitempty"` // Forge's own name/value type, not corev1.EnvVar
     Scaling       ScalingSpec       `json:"scaling"`
     Resources     ResourceSpec      `json:"resources"`
     Ingress       *IngressSpec      `json:"ingress,omitempty"`
@@ -167,13 +170,13 @@ type ServiceSpec struct {
 }
 
 // consumed by, and type-checked against:
-//   controller-gen  -> config/crd/forge.dev_services.yaml
+//   controller-gen  -> config/crd/forge.dev_forgeservices.yaml
 //   internal/controller -> reconciliation logic
 //   (infra/terraform sits deliberately outside this boundary)
 //   cmd/forge       -> CLI scaffolding and validation
 ```
 
-Add a field to the contract and the compiler still tells you every place in the controller and CLI that must handle it. The infrastructure code never needs per-service changes either: ECR repositories are created on first push from a template (§15), so Terraform does not list services at all. What is lost is only the compile-time link between the contract and the AWS foundation, which in practice had little to check.
+Add a field to the contract and the compiler still tells you every place in the controller and CLI that must handle it. An ordinary service needs no infrastructure change either: ECR repositories are created on first push from a template (§15). Only a service that calls AWS needs a Terraform change, for its IAM role (§13). What is lost is only the compile-time link between the contract and the AWS foundation, which in practice had little to check.
 
 What it brings: Terraform is the more common enterprise choice, its AWS provider and the community terraform-aws-modules (VPC, EKS, Karpenter) are the most heavily trodden path to this exact stack, and terraform plan gives a reviewable diff before every apply. Local modules under infra/terraform/modules map one-to-one onto the foundation's layers. They are called from two roots split by lifecycle (§7), so the teardown round trip in §4 is a single terraform destroy and terraform apply of the main root.
 
@@ -186,7 +189,7 @@ Forge must not become one large Terraform configuration that deploys every appli
 | Terraform | AWS infrastructure, in two roots. Persistent: ECR repository template and scanning, GitHub OIDC provider and CI role, EC2 Spot service-linked role, ACM certificate. Main: VPC, EKS and add-ons, IAM and Pod Identity roles, Karpenter's interruption queue, and the Argo CD bootstrap. | Anything inside the cluster beyond bootstrapping Argo CD. The state bucket and hosted zone, which are created by hand and looked up. |
 | Helm | Platform component packaging: Karpenter, LB Controller, ExternalDNS, Kyverno, kube-prometheus-stack, deployed by Argo CD from charts/platform. | Application workloads. |
 | Argo CD | Reconciliation of desired state from Git into the cluster. Sole write path. | Deciding what the desired state should be. |
-| Forge controller | Translating a Service CR into Deployment, Service, Ingress, HPA, PDB, ServiceAccount, NetworkPolicy, ServiceMonitor. | AWS resource provisioning. |
+| Forge controller | Translating a ForgeService CR into Deployment, Service, Ingress, HPA, PDB, ServiceAccount, NetworkPolicy, ServiceMonitor. | AWS resource provisioning. |
 | Forge CLI | Developer ergonomics: scaffolding, validation, status aggregation, SLO reporting. | Writing to the cluster. Ever. |
 
 > **The invariant.** Argo CD is the only component with write access to application state in the cluster. CI writes to Git. The CLI writes to Git. The controller writes only resources it owns, in response to a CR that Argo placed. If any other component acquires cluster write credentials, the design has broken.
@@ -212,7 +215,7 @@ Forge must not become one large Terraform configuration that deploys every appli
   GitOps repo (desired state)                        v
       |                                       AWS FOUNDATION
       v                                              |
-  Argo CD  --- ApplicationSet ---> Service CR        |
+  Argo CD  --- ApplicationSet ---> ForgeService CR   |
       |                                 |            |
       |                                 v            |
       |                        FORGE CONTROLLER (Go) |
@@ -243,9 +246,9 @@ The contract is the platform. It describes what an application needs, never how 
 
 ```yaml
 apiVersion: forge.dev/v1alpha1
-kind: Service
+kind: ForgeService
 metadata:
-  name: payments-api
+  name: payments
   namespace: payments-prod
 spec:
   owner: payments-team          # routed to for alerts; required
@@ -254,6 +257,10 @@ spec:
   runtime:
     port: 8080
 
+  env:                          # plain values only; no secrets, no valueFrom
+    - name: LOG_LEVEL
+      value: info
+
   scaling:
     minReplicas: 2
     maxReplicas: 10
@@ -261,12 +268,11 @@ spec:
 
   resources:
     requests: { cpu: 250m, memory: 256Mi }
-    limits:   { cpu: 1000m, memory: 512Mi }
+    limits:   { memory: 512Mi }     # memory only; there is no CPU limit field
 
   ingress:
     enabled: true
-    host: payments.example.com
-    tls: true                   # ACM cert discovered by host match
+    host: payments.example.com  # always HTTPS; ACM cert found by host match
     path: /
 
   health:
@@ -282,11 +288,6 @@ spec:
     availability: "99.9"        # percent, 30d rolling
     latencyP99Ms: 500
 
-  awsAccess:                    # optional; generates IAM role + Pod Identity
-    - service: s3
-      resource: "arn:aws:s3:::payments-uploads/*"
-      actions: [GetObject, PutObject]
-
 status:
   conditions: [...]             # Ready, Progressing, Degraded
   observedGeneration: 4
@@ -299,20 +300,24 @@ status:
 
 **Note the version.** This is v1alpha1, not v1. The contract will change repeatedly during the build, and shipping a v1 that immediately breaks is worse than labelling its maturity accurately. Promote to v1beta1 once the schema survives two months without a breaking change, and only then plan a conversion webhook.
 
+**Note the kind.** The kind is ForgeService, not Service, so it never collides with the core Kubernetes Service: kubectl get service always resolves to the core kind, which would leave developers typing services.forge.dev. The CRD registers the short name fsvc, so kubectl get fsvc lists them. In prose, "a Forge Service" still means one of these resources.
+
+**Note env.** Environment variables are plain name and value pairs, so configuration such as a log level or a dependency URL can differ between the dev and prod overlays without rebuilding the image. The field uses Forge's own type rather than the Kubernetes EnvVar, which would allow valueFrom references to arbitrary Secrets and ConfigMaps. Values are stored in Git, so secrets never go here; secret references through External Secrets are a later, additive change.
+
 **Note what is absent.** No mention of ALB, Route 53, node types, availability zones, or IAM trust policies. A developer cannot express an AWS-specific concept through this contract, which is what makes the abstraction real rather than decorative.
 
-**Note awsAccess.** This is the most opinionated field. It lets a developer request AWS permissions declaratively and lets the platform generate a least-privilege IAM role and Pod Identity association. It is also the field most likely to need a review gate, since it is a privilege-escalation path if left unguarded. Treat changes to it as requiring platform-team approval in the GitOps repo.
+**Note what is not here: AWS access.** The contract has no field for AWS permissions. Granting them means creating an IAM role and a Pod Identity association, which are AWS resources, and the controller only ever writes Kubernetes objects (§7). A service that calls AWS gets its role from Terraform instead, bound to the ServiceAccount the controller renders, <svc>-sa in the service's namespace; that name is the whole interface between the two. Because AWS permissions are a privilege-escalation path, routing every grant through a reviewed Terraform change is the approval gate this needs anyway. The design is recorded in docs/adr/0001-per-service-aws-access.md.
 
 **Reference implementation.** Phase 3 built one service, payments-api, by hand to find out exactly what the controller must produce. The service itself sets the bar every golden-path service meets: liveness that checks nothing but the process, readiness that reflects dependencies, metrics on a separate port that the ALB never exposes, request metrics labelled by matched route with health checks excluded, graceful shutdown on SIGTERM, JSON logs, and a distroless non-root image. What it needed from Kubernetes, split into what comes from the contract and what the platform fixes:
 
 | Resource | From the contract | Fixed by the platform |
 |---|---|---|
-| Deployment | image, runtime.port, resources, environment, health paths | Non-root UID, read-only root filesystem, all capabilities dropped, seccomp RuntimeDefault. No replicas field (the HPA owns it). preStop sleep of 15 s, which with the app's 10 s shutdown fits the 30 s grace period. |
+| Deployment | image, runtime.port, env, resources, health paths | Non-root UID, read-only root filesystem, all capabilities dropped, seccomp RuntimeDefault. No replicas field (the HPA owns it). preStop sleep of 15 s, which with the app's 10 s shutdown fits the 30 s grace period. |
 | Service | runtime.port, observability.metricsPort | Named ports http and metrics; the app label the ServiceMonitor selects on. |
 | Ingress | ingress.host, ingress.path | forge-shared group, target type ip, HTTP to HTTPS redirect, ALB health check on the readiness path. Never routes the metrics port. |
 | Horizontal Pod Autoscaler | scaling.minReplicas, maxReplicas, targetCPUUtilization | Utilization is measured against the CPU request. |
-| Pod Disruption Budget | Derived from scaling.minReplicas | minAvailable 1, so drains, consolidation and spot replacement never take every pod at once. |
-| ServiceAccount | awsAccess (generates a Pod Identity association) | One per service, token automount off. No image pull secrets: nodes pull from ECR with the node role. |
+| Pod Disruption Budget | - | maxUnavailable 1 with unhealthyPodEvictionPolicy AlwaysAllow: drains, consolidation and spot replacement take one pod at a time, a single-replica service can still be drained, and a pod that is not Ready never blocks a drain. |
+| ServiceAccount | - | One per service, named <svc>-sa, token automount off. No image pull secrets: nodes pull from ECR with the node role. Its name is the stable identity Terraform binds a service's IAM role to (§13). |
 | NetworkPolicy | Declared dependencies (future) | Ingress only: the http port from the public subnets (where the ALB lives), the metrics port from the Prometheus namespace. |
 | ServiceMonitor | observability.metricsPath, metricsPort | 15 s scrape interval, 10 s timeout. |
 | Namespace and Application | - | Readiness-gate injection label on the namespace; Argo CD sync wave after the monitoring stack, with retry and CreateNamespace. |
@@ -353,7 +358,7 @@ Pending pod
     v
 Karpenter NodePool
     |
-    +-- requirements: amd64, spot then on-demand, t/m/c, 2-4 vCPU
+    +-- requirements: amd64, spot then on-demand, t/m/c, 2-4 vCPU, >= 4 GiB memory
     +-- limits: cpu 20, memory 20Gi   (hard ceiling; cost guardrail)
     +-- disruption: consolidateAfter 2m, expireAfter 24h
     |
@@ -371,6 +376,8 @@ EC2 spot capacity
 **Supporting AWS pieces.** Karpenter v1.15 runs with the controller policy from Karpenter's own template for that version, kept in the repository as a versioned file. Its nodes run as a separate node role with an EC2_LINUX access entry, without which they launch but never join. An SQS queue fed by five EventBridge rules delivers spot interruption warnings, rebalance recommendations, instance state changes, scheduled maintenance and capacity reservation warnings, so nodes are drained before AWS reclaims them. The EC2 Spot service-linked role is created once in the persistent root, since a new account has none.
 
 **Two settings that are easy to miss.** The NodePool only allows amd64 instances, because CI builds amd64 images; otherwise Karpenter picks Graviton whenever it is cheaper and services fail to start. And the EC2NodeClass sets maxPods to 110, because Karpenter does not detect the VPC CNI's prefix delegation and would otherwise size nodes for about 11 pods.
+
+**Memory floor.** The NodePool also requires at least 4 GiB of memory per instance (instance-memory greater than 3071 MiB). Without it, Karpenter picked micro and small instances because they are cheapest per pod; on a 1 GiB node only about 515Mi was allocatable after the kubelet and DaemonSets, and Grafana never became Ready there. The floor matches the cost model's assumption of t3a.medium-class nodes and costs roughly \$1 to \$3 a month at expected usage; in return, bootstrap converges without manual intervention.
 
 ### 10.4 Accounts and Access
 
@@ -393,43 +400,44 @@ Critically, all Forge services share a single ALB through the IngressGroup annot
 # rendered by the controller onto every service Ingress
 annotations:
   alb.ingress.kubernetes.io/group.name: forge-shared
-  alb.ingress.kubernetes.io/group.order: "10"
   alb.ingress.kubernetes.io/scheme: internet-facing
   alb.ingress.kubernetes.io/target-type: ip
   alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443},{"HTTP":80}]'
   alb.ingress.kubernetes.io/ssl-redirect: "443"
   alb.ingress.kubernetes.io/healthcheck-path: /health/ready
 
-Developer                         one ALB, many services
-    |                                   |
-    v                                   v
-Service CR --> Forge controller --> Ingress (group: forge-shared)
-                                        |
-                                        v
-                             AWS Load Balancer Controller
-                                        |
-                                        v
-                          Shared ALB --> target group --> pod IPs
+Developer                              one ALB, many services
+    |                                        |
+    v                                        v
+ForgeService CR --> Forge controller --> Ingress (group: forge-shared)
+                                             |
+                                             v
+                                  AWS Load Balancer Controller
+                                             |
+                                             v
+                               Shared ALB --> target group --> pod IPs
 ```
 
 Target type ip routes directly to pod IPs rather than through NodePort, which removes a hop and makes ALB-level metrics attributable to individual pods. That attribution is what makes the SLI in §18 possible.
 
 **Controller configuration.** The controller (v3.6.0) runs one replica and finds the VPC by its Name tag rather than its ID, so the configuration in Git stays valid across rebuilds that recreate the VPC. Setting the region and VPC explicitly also keeps it independent of instance metadata, which Karpenter's nodes block from pods by default.
 
-**A shared ALB is a shared risk.** Any namespace can join the forge-shared group, so anyone allowed to create an Ingress could add rules to the shared ALB, including rules for another service's hostname. A Kyverno policy restricts the group to Ingresses rendered by the Forge controller (§16.2).
+**A shared ALB is a shared risk.** Any namespace can join the forge-shared group, so anyone allowed to create an Ingress could add rules to the shared ALB, including rules for another service's hostname. A Kyverno policy restricts the group to Ingresses rendered by the Forge controller, and a second rejects any Ingress whose host is already used in the group (§16.2). One host per service is also why Ingresses carry no group.order: rules from different services can never match the same request, so their order on the listener has no effect.
 
 **Zero-downtime rollouts.** Two settings close the gaps between Kubernetes and the ALB. A preStop sleep (15 s) keeps a terminating pod serving until the ALB has deregistered it; without it, rollouts produce occasional 502s. Readiness gates, injected by the Load Balancer Controller into pods in namespaces labelled elbv2.k8s.aws/pod-readiness-gate-inject, stop Kubernetes counting a new pod as Ready until the ALB reports its target healthy; without them, a rollout can briefly leave the ALB with no healthy targets. With both, a request loop across repeated rollouts sees no errors.
+
+**Webhook certificates.** The controller's admission webhooks need a serving certificate that the API server trusts. The chart can generate one, but only at render time, and under Argo CD every render produces a new CA (§14); when the certificate and the webhook configurations were applied from different renders, admission calls failed with x509 errors and Ingresses could not be created. cert-manager now issues the certificate inside the cluster (enableCertManager): the chart renders a self-signed root, a CA issuer and a serving Certificate, and cert-manager's CA injector writes the matching caBundle into both webhook configurations. Nothing certificate-related is generated at render time, so no ignoreDifferences rules are needed. The Service mutator webhook is disabled: Forge exposes services through Ingress, not LoadBalancer Services, and the webhook would otherwise sit in the path of every Service creation in the cluster, including during bootstrap before the controller is ready.
 
 ## 12. DNS and TLS
 
 - Route 53 holds the hosted zone and is the DNS authority. \$0.50/month, and the one component that cannot be torn down without losing the zone's name servers. It is created by hand in the Forge account and looked up by Terraform, never managed by it.
 - ExternalDNS reconciles Ingress host fields into Route 53 alias records. It runs in sync mode, so records are deleted when their Ingress is, with an owner ID (forge) recorded in TXT records so it only ever touches its own entries, a domain filter on the Forge zone, and event-driven updates rather than a one-minute poll. Alias queries to an ALB are not billed, so query volume is free at this scale.
 - ACM issues a wildcard certificate for the zone, validated by DNS. The LB Controller discovers it by host match, so no per-service certificate management exists. It lives in the persistent root, so a rebuild never waits for validation.
-- A developer sets ingress.host and ingress.tls in the contract. Nothing else. No certificate request, no DNS record, no annotation.
+- A developer sets ingress.host in the contract. Nothing else: HTTPS, with a redirect from HTTP, is always on and there is no field to turn it off. No certificate request, no DNS record, no annotation.
 
 Use a wildcard certificate rather than per-service certificates. It is one ACM resource, it survives teardown, and it removes an entire class of first-deploy latency where a service waits on certificate validation.
 
-**Where TLS ends.** TLS terminates at the ALB, which can only use ACM certificates. cert-manager is not used: the certificates it issues live in Kubernetes Secrets that an ALB cannot read. Traffic from the ALB to pods is plain HTTP inside the VPC, consistent with the service-mesh non-goal in §3; re-encryption to the pod or a mesh would be the answer if that requirement changed.
+**Where TLS ends.** TLS terminates at the ALB, which can only use ACM certificates. cert-manager is not used for public TLS: the certificates it issues live in Kubernetes Secrets that an ALB cannot read. Its only role is the in-cluster webhook certificates (§11). Traffic from the ALB to pods is plain HTTP inside the VPC, consistent with the service-mesh non-goal in §3; re-encryption to the pod or a mesh would be the answer if that requirement changed.
 
 **Records and teardown.** Teardown deletes Ingresses, then waits until ExternalDNS has removed its records (no TXT ownership records left in the zone) before terraform destroy removes its permissions. If records do survive, the next build adopts them through the same owner ID. Resolvers cache "does not exist" answers for the zone's SOA minimum TTL, so after a rebuild a hostname can stay unresolvable for some minutes; lowering that TTL to 60 s shortens the gap.
 
@@ -439,10 +447,10 @@ Use a wildcard certificate rather than per-service certificates. It is one ACM r
 Kubernetes ServiceAccount   (rendered by the controller)
           |
           v
-  EKS Pod Identity Association
+  EKS Pod Identity Association   (Terraform)
           |
           v
-     IAM Role  (least privilege, generated from spec.awsAccess)
+     IAM Role  (least privilege, defined in Terraform per service)
           |
           v
      AWS service (S3, SQS, Secrets Manager, ...)
@@ -465,10 +473,10 @@ For application secrets, use the External Secrets Operator to sync from AWS Secr
 This section resolves the central contradiction in Revision 1. There is no imperative deploy path in Forge. CI publishes artifacts. Git holds desired state. Argo CD reconciles. Nothing else writes to the cluster.
 
 ```text
-forge create payments-api
+forge create payments
         |
         +--> scaffolds service repo (Dockerfile, health endpoints, CI workflow)
-        +--> opens a PR against the GitOps repo adding a Service CR
+        +--> opens a PR against the GitOps repo adding a ForgeService CR
                     |
                     v (human merges)
               GitOps repo
@@ -476,11 +484,11 @@ forge create payments-api
                     v
         Argo CD ApplicationSet (git directory generator)
                     |
-                    +--> Application: payments-api-dev
-                    +--> Application: payments-api-prod
+                    +--> Application: payments-dev
+                    +--> Application: payments-prod
                     |
                     v
-              Service CR applied to cluster
+              ForgeService CR applied to cluster
                     |
                     v
               Forge controller reconciles
@@ -491,8 +499,8 @@ forge create payments-api
 
 | Command | What it actually does |
 |---|---|
-| forge create &lt;name&gt; | Scaffolds the service repository and opens a PR adding a Service CR to the GitOps repo. Writes to Git, never to the cluster. |
-| forge status &lt;name&gt; | Reads the Service CR status subresource and the Argo Application sync state. Read-only. |
+| forge create &lt;name&gt; | Scaffolds the service repository and opens a PR adding a ForgeService CR to the GitOps repo. Writes to Git, never to the cluster. |
+| forge status &lt;name&gt; | Reads the ForgeService CR status subresource and the Argo Application sync state. Read-only. |
 | forge promote &lt;name&gt; --to prod | Opens a PR copying the image tag from the dev overlay to the prod overlay. A human merges it. |
 | forge rollback &lt;name&gt; | Opens a PR reverting the GitOps commit that changed the image tag. Argo reconciles the revert. |
 | forge logs &lt;name&gt; | Streams pod logs via the Kubernetes API. Read-only convenience. |
@@ -500,7 +508,7 @@ forge create payments-api
 
 > **The design rule.** Every Forge command that changes the system produces a Git commit. Every command that does not produce a Git commit is read-only. There is no third category. This is a single sentence, it is enforceable by inspection, and it is the strongest thing this document says about deployment.
 
-The ApplicationSet is the glue Revision 1 left unspecified. A git directory generator watching the GitOps repository turns each directory into an Argo Application automatically, so registering a new service requires no Argo configuration — the PR that adds the Service CR is the entire registration process.
+The ApplicationSet is the glue Revision 1 left unspecified. A git directory generator watching the GitOps repository turns each directory into an Argo Application automatically, so registering a new service requires no Argo configuration — the PR that adds the ForgeService CR is the entire registration process.
 
 **Two repositories, eventually.** Argo CD reads from this repository. Platform components are Applications in charts/platform: Terraform creates one root Application pointing there, and each component appears as its own Application with its own sync status and history. Until Phase 5, service manifests also live here, as Kustomize folders under charts/&lt;service&gt;. The separate GitOps repository and its ApplicationSet replace them in Phase 5, which moves CI's frequent image-tag commits out of the platform repository's history.
 
@@ -512,12 +520,16 @@ The ApplicationSet is the glue Revision 1 left unspecified. A git directory gene
 |---|---|---|
 | -3 | karpenter | Only what Terraform created: IAM, Pod Identity, the interruption queue |
 | -2 | karpenter-configs (NodePool, EC2NodeClass) | Karpenter |
-| -1 | external-secrets | Capacity from Karpenter |
-| 0 | external-secrets-configs (ClusterSecretStore), LB Controller, ExternalDNS | ESO's CRDs |
-| 1 | kube-prometheus-stack | The ClusterSecretStore |
-| 2 | Services (payments-api) | The ServiceMonitor CRD |
+| -1 | external-secrets, cert-manager | Capacity from Karpenter |
+| 0 | external-secrets-configs (ClusterSecretStore), kube-prometheus-crds, LB Controller, ExternalDNS | ESO's CRDs; cert-manager for the LB Controller's certificate |
+| 1 | kube-prometheus-stack | The ClusterSecretStore and the monitoring CRDs |
+| 2 | Services (payments) | The ServiceMonitor CRD |
 
-**Charts under Argo CD.** Argo CD renders charts with helm template on every sync and never runs helm install, which breaks two common chart features. Values generated during rendering, such as Grafana's default admin password, change on every render, so the application never settles and self-heal turns that into a rollout loop. Helm hooks, such as kube-prometheus-stack's admission webhook Jobs, can finish without Argo CD noticing and stall the sync. The rules: secrets come from outside the chart via existingSecret and ESO; hooks are disabled where the chart allows; charts with large CRDs use ServerSideApply; and no Application gets auto-sync until it has stayed Synced across several refreshes. A chart that ships CRDs together with resources of those types can fail its first sync on a fresh cluster; installing the CRDs from a separate, earlier Application (prometheus-operator-crds for the monitoring stack) removes the race.
+**Charts under Argo CD.** Argo CD renders charts with helm template on every sync and never runs helm install, which breaks two common chart features. Values generated during rendering, such as Grafana's default admin password, change on every render, so the application never settles and self-heal turns that into a rollout loop. Helm hooks, such as kube-prometheus-stack's admission webhook Jobs, can finish without Argo CD noticing and stall the sync. The rules: secrets come from outside the chart via existingSecret and ESO; hooks are disabled where the chart allows; charts with large CRDs use ServerSideApply; certificates are issued by cert-manager inside the cluster rather than generated at render time (§11); and no Application gets auto-sync until it has stayed Synced across several refreshes.
+
+**Monitoring CRDs.** A chart that ships CRDs together with resources of those types can fail its first sync on a fresh cluster. The monitoring CRDs therefore install from their own Application at wave 0, using the prometheus-operator-crds chart, and kube-prometheus-stack runs with crds.enabled set to false. The two chart versions are pinned as a pair that carries the same operator version (prometheus-operator-crds 32.0.1 and kube-prometheus-stack 92.11.0, both operator v0.94.1) and are upgraded together. The CRD Application is annotated Prune=false and Delete=false, because deleting a CRD deletes every resource of that type.
+
+**Expected transient states.** During bootstrap, some Applications briefly report Progressing or Degraded: pods stay Pending while Karpenter launches nodes, and the Prometheus resource reports unavailable until the operator has created its StatefulSet. These clear without intervention. A state that persists after the nodes have joined is a real fault and is investigated as one.
 
 **Controller sizing.** The application controller caches every managed resource, and large CRDs make syncs expensive. It runs with 512Mi requested, a 1Gi limit and GOMEMLIMIT set to 900MiB; without that setting, Go's garbage collector let memory overshoot the limit during the bootstrap rush and the controller was OOM-killed partway through a sync.
 
@@ -575,18 +587,20 @@ Baseline controls are rendered by the controller, so they are not optional and c
 - ServiceAccount per service with token automount off. AWS access comes from a Pod Identity association, not a ServiceAccount annotation.
 - runAsNonRoot, readOnlyRootFilesystem, all capabilities dropped, seccomp RuntimeDefault.
 - A writable emptyDir at /tmp alongside the read-only root filesystem, so runtimes that need scratch space (.NET, Java) work without weakening the policy.
-- Resource requests and limits from the contract — required fields, so they cannot be omitted.
-- PodDisruptionBudget derived from minReplicas, and an HPA that owns the replica count: the Deployment sets no replicas, or Argo CD's self-heal fights the HPA.
+- CPU and memory requests and a memory limit from the contract — required fields, so they cannot be omitted. There is no CPU limit: it throttles a service even when the node has idle CPU, while requests already guarantee each service its share.
+- PodDisruptionBudget with maxUnavailable 1, which never blocks a drain whatever the replica count, and an HPA that owns the replica count: the Deployment sets no replicas, or Argo CD's self-heal fights the HPA.
 - Readiness and liveness probes from the contract — also required.
 - A preStop sleep and readiness-gate injection for zero-downtime rollouts (§11).
+- A topology spread constraint across nodes (maxSkew 1, ScheduleAnyway), so replicas land on different nodes where possible and one spot interruption cannot take every pod. Preferred over pod anti-affinity, which Karpenter satisfies by launching a node per replica.
 
 ### 16.2 Enforced by Kyverno
 
 - verifyImages against the cosign keyless identity. This is the highest-value policy in the set and should be written first.
 - Registry allowlist restricted to the project ECR account.
-- Require resource limits, probes, and non-root — defense in depth behind the controller.
+- Require resource requests, a memory limit, probes, and non-root — defense in depth behind the controller.
 - Disallow privileged, hostNetwork, hostPath, and privilege escalation.
 - Restrict the forge-shared IngressGroup to Ingresses rendered by the Forge controller (§11).
+- Reject an Ingress whose host is already claimed by another Ingress in the forge-shared group, so one service can never take over another's traffic (§11).
 
 Run Kyverno in Audit mode first and read the policy reports before switching to Enforce. Turning on enforcement across a working cluster and watching every deployment fail is a memorable but avoidable afternoon.
 
@@ -619,7 +633,7 @@ Every Forge service receives, with no configuration beyond observability.metrics
 
 > **Scope decision.** OpenTelemetry tracing is deferred. Metrics and SLOs fit the budget; a trace backend does not, and half-instrumented tracing is worse than none. §24 records the omission and what adding tracing would take.
 
-**As configured.** Prometheus selects ServiceMonitors from every namespace and release, so a service needs no special labels to be scraped. The chart's admission webhooks are disabled (see §14), data is kept for 24 hours on an emptyDir since it would not survive teardown anyway, and Alertmanager is off until alerting arrives with the SLOs. Grafana is reached by port-forward and its admin password comes from Secrets Manager through ESO.
+**As configured.** Prometheus selects ServiceMonitors from every namespace and release, so a service needs no special labels to be scraped. The monitoring CRDs install from a separate Application and the chart's admission webhooks are disabled (see §14). Data is kept for 24 hours on an emptyDir since it would not survive teardown anyway, and Alertmanager is off until alerting arrives with the SLOs. Grafana is reached by port-forward, runs with a 512Mi memory limit, and its admin password comes from Secrets Manager through ESO.
 
 **The request metrics contract.** Every service exposes http_requests_total and http_request_duration_seconds, labelled by method, matched route pattern and status code, on its metrics port. Labelling by route pattern rather than raw path keeps the number of series bounded when scanners hit random URLs through the ALB, and health-check paths are excluded so frequent probes do not dilute the success rate. The sample service's ERROR_RATE setting injects 500s, and an injected 10% measured as 11% in Prometheus, which validates the path from request to SLI end to end.
 
@@ -682,7 +696,7 @@ Revision 1 did not address environments. Under a \$50 ceiling the answer is a si
 |---|---|---|
 | Isolation | Namespace per service per environment in one cluster. | Separate clusters, often separate AWS accounts. |
 | Promotion | PR copying an image tag from the dev overlay to the prod overlay. | Same mechanism. This part genuinely scales. |
-| Config | Kustomize overlays per environment over a common Service CR base. | Same. |
+| Config | Kustomize overlays per environment over a common ForgeService CR base. | Same. |
 | Blast radius | Shared control plane, shared node pool, shared ALB. | Isolated per environment. |
 | Access | One RBAC model, namespace-scoped roles. | Separate credentials per environment. |
 
@@ -691,14 +705,14 @@ The GitOps repository layout that supports this:
 ```text
 gitops/
 ├── base/
-│   └── payments-api/
-│       └── service.yaml           # Service CR, no image tag
+│   └── payments/
+│       └── forgeservice.yaml      # ForgeService CR, no image tag
 ├── overlays/
 │   ├── dev/
-│   │   └── payments-api/
+│   │   └── payments/
 │   │       └── kustomization.yaml # image tag, minReplicas 1, no SLO
 │   └── prod/
-│       └── payments-api/
+│       └── payments/
 │           └── kustomization.yaml # image tag, minReplicas 2, SLO 99.9
 └── applicationset.yaml            # git directory generator over overlays/*/*
 ```
@@ -711,7 +725,7 @@ The point is not that Forge can deploy a workload. It is that workloads Forge cr
 
 | Experiment | Expected behavior | What it proves |
 |---|---|---|
-| Delete pods in a loop | PDB holds minimum availability; ALB drains connections; SLI dips measurably but within budget. | PDB and readiness gates are correctly configured. |
+| Delete pods in a loop | PDB limits voluntary disruption to one pod at a time; ALB drains connections; SLI dips measurably but within budget. | PDB and readiness gates are correctly configured. |
 | Drain a node | Pods reschedule; Karpenter provisions replacement capacity; no 5xx at the ALB. | Capacity management works without human intervention. |
 | Force spot interruption | Karpenter handles the 2-minute notice, cordons and drains ahead of reclaim. | Spot-first is a safe default, not a cost gamble. |
 | Break the readiness endpoint | Pod removed from the target group; traffic shifts to healthy replicas; SLI stays flat. | Health checking is wired end to end. |
@@ -800,7 +814,7 @@ Rates are for us-east-1, which has the same list prices as us-east-2 for every l
 
 > **The finding.** Under teardown discipline the budget is not tight — there is roughly 3x headroom over the realistic working pattern. Without teardown it is unreachable by a factor of 3.6, and the EKS control plane alone consumes 146% of it. This is why teardown automation is Phase 1 work with an exit criterion, not a cleanup task deferred to the end.
 
-Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims and Karpenter NodePools so their controllers remove the AWS resources behind them before terraform destroy; a post-destroy check that fails if EBS volumes were left behind, since they do not block the destroy and would keep billing; an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
+Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open; a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance holds the cluster security group and blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
 
 ## 23. Definition of Done
 
@@ -808,7 +822,7 @@ Forge is complete when this sequence runs end to end with no manual Kubernetes o
 
 ```text
 $ make up                          # platform from nothing, < 30 minutes
-$ forge create payments-api        # scaffold + PR
+$ forge create payments            # scaffold + PR
 $ gh pr merge                      # register the service
 $ git push                         # application code change
       |
@@ -819,7 +833,7 @@ $ git push                         # application code change
   GitOps dev overlay updated automatically
       |
       v
-  Argo CD syncs -> Service CR -> Forge controller
+  Argo CD syncs -> ForgeService CR -> Forge controller
       |
       v
   Namespace, Deployment, Service, ServiceAccount, Ingress,
@@ -831,12 +845,12 @@ $ git push                         # application code change
       v
   https://payments-dev.example.com  serving traffic
       |
-$ forge promote payments-api --to prod
+$ forge promote payments --to prod
       |
       v
   https://payments.example.com  serving traffic
       |
-$ forge slo payments-api
+$ forge slo payments
   availability 99.97%  budget consumed 26.6%  remaining 31.7 min  burn 0.4x
       |
 $ make chaos                       # kill pods, drain nodes, inject 500s
@@ -866,11 +880,11 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | Multi-architecture images | Deferred | The NodePool is restricted to amd64 until CI builds multi-architecture images. Graviton instances would then lower compute cost. |
 | Second runtime: ECS on Fargate | Future | Keep EKS as the control plane; the controller renders AWS Controllers for Kubernetes (ACK) resources for services placed on ECS, so it still only writes Kubernetes objects. Open design question: the shared ALB, which the Load Balancer Controller owns. Estimate 80 to 120 hours for parity, 25 to 35 for a proof of concept behind its own ALB. |
 | Golden paths for other languages (.NET first) | Future | The contract is language-neutral and must stay so. A second language needs a forge create template, a CI workflow variant (tests and dependency scanning; build, scan, sign and push stay shared) and a minimal base image. Estimate 10 to 15 hours. |
-| AWS access for services | Open | A service needing AWS permissions needs a Pod Identity association, which is an AWS resource; the controller only writes Kubernetes objects. Candidates: Terraform per service, or ACK resources rendered by the controller. |
+| AWS access for services | Decided | Not part of the contract. A service that calls AWS gets an IAM role and Pod Identity association from Terraform, bound to its ServiceAccount (<svc>-sa in its namespace). The controller stays limited to Kubernetes objects (§7), and every AWS permission goes through a reviewed Terraform change. ACK remains an option if self-service AWS access is ever wanted. Design recorded in ADR 0001; built when the first service needs AWS access. |
 | GitOps repository credential | Open | The workflow token cannot push to another repository. Phase 5 needs a deploy key on the GitOps repository or a GitHub App. |
 | terraform plan in CI | Deferred | Needs a separate read-only role with state access. Only the persistent root's plan is meaningful; the main root is usually torn down. |
-| Account-specific values | Open | The account ID, domain and repository URL are repeated across about fifteen files. Consolidate into Terraform variables and, from Phase 4, controller configuration. |
-| Monitoring CRDs | Open | kube-prometheus-stack can show Degraded on a fresh cluster while its own CRDs register. Move them to a separate prometheus-operator-crds Application if SkipDryRunOnMissingResource does not settle it. |
+| Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and, from Phase 4, the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Scheduled just before Phase 4. |
+| Monitoring CRDs | Resolved | The CRDs install from a separate prometheus-operator-crds Application at wave 0, version-matched to kube-prometheus-stack and protected from pruning (§14). |
 
 **Future extensions.** The ECS and other-language rows are candidates once the initial delivery is complete, because each proves the contract from a different side: the same Service runs on a second runtime, or the same pipeline builds a second language. Both are cheaper to keep possible than to retrofit, which is why the contract stays free of runtime and language details and the controller already mounts a writable /tmp.
 
