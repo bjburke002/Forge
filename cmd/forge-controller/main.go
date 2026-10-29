@@ -80,7 +80,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	reconciler := &controller.ForgeServiceReconciler{Client: mgr.GetClient()}
+	reconciler := &controller.ForgeServiceReconciler{
+		Client: mgr.GetClient()}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Unable to set up the controller")
 		os.Exit(1)

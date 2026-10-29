@@ -2,8 +2,21 @@ package resources
 
 import (
 	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 )
+
+// Controller reference information
+func ownerRef(fs *v1alpha1.ForgeService) *metav1ac.OwnerReferenceApplyConfiguration {
+	// should return "forge.dev/v1alpha1"
+	return metav1ac.OwnerReference().
+		WithAPIVersion(v1alpha1.GroupVersion.String()).
+		WithKind("ForgeService").
+		WithName(fs.Name).
+		WithUID(fs.UID).
+		WithController(true).
+		WithBlockOwnerDeletion(true)
+}
 
 // Helper to map labels
 func labels(fs *v1alpha1.ForgeService) map[string]string {
@@ -34,13 +47,14 @@ const (
 	readinessProbeTimeoutSeconds      = 5
 	readinessProbeFailureThreshold    = 3
 	tempVolumeName                    = "tmp"
+	FieldOwner                        = "forge-controller"
 )
 
 // Helper function to store spec environment variables
-func envVars(fs *v1alpha1.ForgeService) []corev1.EnvVar {
-	env := make([]corev1.EnvVar, 0, len(fs.Spec.Env))
+func envVars(fs *v1alpha1.ForgeService) []*corev1ac.EnvVarApplyConfiguration {
+	env := make([]*corev1ac.EnvVarApplyConfiguration, 0, len(fs.Spec.Env))
 	for _, e := range fs.Spec.Env {
-		env = append(env, corev1.EnvVar{Name: e.Name, Value: e.Value})
+		env = append(env, corev1ac.EnvVar().WithName(e.Name).WithValue(e.Value))
 	}
 	return env
 }

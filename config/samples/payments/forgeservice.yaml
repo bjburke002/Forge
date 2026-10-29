@@ -4,7 +4,7 @@ metadata:
   name: payments
 spec:
   owner: payments-team
-  image: 241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api:latest
+  image: 241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api:f4bdd2be1076cf64fc4b8b2b81d3b4caa820b926
   runtime:
     port: 8080
   env:
