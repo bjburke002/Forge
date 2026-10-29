@@ -16,6 +16,7 @@ type ForgeServiceReconciler struct {
 // +kubebuilder:rbac:groups=forge.dev,resources=forgeservices,verbs=get;list;watch
 // +kubebuilder:rbac:groups=forge.dev,resources=forgeservices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="";events.k8s.io,resources=events,verbs=create;patch
+
 func (r *ForgeServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
