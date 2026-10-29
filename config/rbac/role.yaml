@@ -1,0 +1,30 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: forge-controller
+rules:
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - forge.dev
+  resources:
+  - forgeservices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - forge.dev
+  resources:
+  - forgeservices/status
+  verbs:
+  - get
+  - patch
+  - update

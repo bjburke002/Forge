@@ -76,7 +76,7 @@ func main() {
 		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
-		setupLog.Error(err, "Unable to create the controller reconciler manager")
+		setupLog.Error(err, "Unable to create the manager")
 		os.Exit(1)
 	}
 
@@ -99,7 +99,7 @@ func main() {
 	setupLog.Info("Starting manager...")
 
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
-		setupLog.Error(err, "Unable to start the controller reconciler manager..")
+		setupLog.Error(err, "Unable to start the manager..")
 		os.Exit(1)
 	}
 }
