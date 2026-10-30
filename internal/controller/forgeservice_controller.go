@@ -5,6 +5,7 @@ import (
 
 	"github.com/bjburke002/forge/internal/controller/resources"
 	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
@@ -20,6 +21,7 @@ import (
 
 type ForgeServiceReconciler struct {
 	client.Client
+	Platform resources.Platform
 }
 
 // +kubebuilder:rbac:groups=forge.dev,resources=forgeservices,verbs=get;list;watch
@@ -30,6 +32,8 @@ type ForgeServiceReconciler struct {
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=autoscaling,resources=horizontalpodautoscalers,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=policy,resources=poddisruptionbudgets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;list;watch;create;update;patch;delete
 
 func (r *ForgeServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -48,6 +52,8 @@ func (r *ForgeServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		resources.RenderDeployment(&fs),
 		resources.RenderAutoscaler(&fs),
 		resources.RenderPodDisruptionBudget(&fs),
+		resources.RenderNetworkPolicy(&fs, r.Platform),
+		resources.RenderServiceMonitor(&fs),
 	}
 
 	// Handling empty or removed Ingresses
@@ -91,5 +97,7 @@ func (r *ForgeServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&autoscalingv2.HorizontalPodAutoscaler{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Owns(&monitoringv1.ServiceMonitor{}).
 		Complete(r)
 }

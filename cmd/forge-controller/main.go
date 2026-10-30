@@ -2,17 +2,20 @@ package main
 
 import (
 	"flag"
+	"net/netip"
 	"os"
+	"strings"
 
+	"github.com/bjburke002/forge/internal/controller"
+	"github.com/bjburke002/forge/internal/controller/resources"
+	forgev1alpha1 "github.com/bjburke002/forge/pkg/contract/v1alpha1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
-
-	"github.com/bjburke002/forge/internal/controller"
-	forgev1alpha1 "github.com/bjburke002/forge/pkg/contract/v1alpha1"
 )
 
 func main() {
@@ -40,6 +43,13 @@ func main() {
 	flag.StringVar(&leaderElectionNS, "leader-election-namespace", "forge-system",
 		"Namespace that holds the leader election lease.")
 
+	// Flags to set ALB CIDR ranges and Monitoring namespace
+	var albSubnetCIDRs, monitoringNS string
+	flag.StringVar(&albSubnetCIDRs, "alb-subnet-cidrs", "",
+		"Comma-separated CIDRs of the ALB subnets. Required.")
+	flag.StringVar(&monitoringNS, "monitoring-namespace", "",
+		"Namespace Prometheus scrapes from. Required.")
+
 	// Logging flags for zap
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -51,11 +61,32 @@ func main() {
 	// Creating the actual logger
 	setupLog := ctrl.Log.WithName("setup")
 
+	// Validating that ALB CIDRS and monitoring NS have been passed and are valid
+	var cidrs []string
+	for _, c := range strings.Split(albSubnetCIDRs, ",") {
+		c = strings.TrimSpace(c)
+		if _, err := netip.ParsePrefix(c); err != nil {
+			setupLog.Error(err, "Invalid --alb-subnet-cidrs", "cidr", c)
+			os.Exit(1)
+		}
+		cidrs = append(cidrs, c)
+	}
+	if monitoringNS == "" {
+		setupLog.Error(nil, "--monitoring-namespace is required")
+		os.Exit(1)
+	}
+
 	scheme := runtime.NewScheme()
 
 	// Add built-in client-go types to scheme
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
 		setupLog.Error(err, "Unable to add Kubernetes types to scheme")
+		os.Exit(1)
+	}
+
+	// Adding Prom monitoring types to scheme
+	if err := monitoringv1.AddToScheme(scheme); err != nil {
+		setupLog.Error(err, "Unable to add Prometheus types to scheme")
 		os.Exit(1)
 	}
 
@@ -81,7 +112,12 @@ func main() {
 	}
 
 	reconciler := &controller.ForgeServiceReconciler{
-		Client: mgr.GetClient()}
+		Client: mgr.GetClient(),
+		Platform: resources.Platform{
+			ALBSubnetCIDRS:      cidrs,
+			MonitoringNamespace: monitoringNS,
+		},
+	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Unable to set up the controller")
 		os.Exit(1)

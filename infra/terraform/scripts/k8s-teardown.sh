@@ -63,6 +63,17 @@ kc delete pdb --all -A
 
 if kc get crd nodepools.karpenter.sh >/dev/null 2>&1; then
   kc delete nodepools --all --timeout=10m
+  # Each NodeClaim keeps a finalizer until its instance is terminated 
+  # Wait for all of them to get blown away, or terraform destroy can remove Karpenter mid-drain and orphan the node.
+  deadline=$((SECONDS + 600))
+  while [[ -n "$(kc get nodeclaims -o name)" ]]; do
+    if (( SECONDS >= deadline )); then
+      echo "Error: Karpenter NodeClaims still present after 10 minutes:" >&2
+      kc get nodeclaims >&2
+      exit 1
+    fi
+    sleep 10
+  done
 fi
 
 echo "Kubernetes cleanup complete."
