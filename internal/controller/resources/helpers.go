@@ -33,6 +33,18 @@ func selectorLabels(fs *v1alpha1.ForgeService) map[string]string {
 	}
 }
 
+// Helper to map Ingress annotations
+func ingressAnnotations(fs *v1alpha1.ForgeService) map[string]string {
+	return map[string]string{
+		"alb.ingress.kubernetes.io/group.name":       ingressGroupName,
+		"alb.ingress.kubernetes.io/scheme":           "internet-facing",
+		"alb.ingress.kubernetes.io/target-type":      "ip",
+		"alb.ingress.kubernetes.io/listen-ports":     `[{"HTTP":80}, {"HTTPS":443}]`,
+		"alb.ingress.kubernetes.io/ssl-redirect":     "443",
+		"alb.ingress.kubernetes.io/healthcheck-path": fs.Spec.Health.Readiness,
+	}
+}
+
 // Names that are going to be re-used through multiple renderers
 const (
 	portHTTP                          = "http"
@@ -48,6 +60,7 @@ const (
 	readinessProbeFailureThreshold    = 3
 	tempVolumeName                    = "tmp"
 	FieldOwner                        = "forge-controller"
+	ingressGroupName                  = "forge-shared"
 )
 
 // Helper function to store spec environment variables
