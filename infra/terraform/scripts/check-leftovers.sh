@@ -22,6 +22,9 @@ report "Karpenter instances" "$(ec2 describe-instances \
 report "LB Controller security groups" "$(ec2 describe-security-groups \
   --filters Name=tag:elbv2.k8s.aws/cluster,Values="$CLUSTER" --query 'SecurityGroups[].GroupId')"
 
+report "EKS cluster security group (blocks VPC deletion)" "$(ec2 describe-security-groups \
+  --filters Name=tag:aws:eks:cluster-name,Values="$CLUSTER" --query 'SecurityGroups[].GroupId')"
+  
 # The tagging API can briefly list load balancers that were just deleted, so confirm each one.
 lbs=""
 for arn in $(aws resourcegroupstaggingapi get-resources --region "$REGION" \
