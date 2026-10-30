@@ -9,11 +9,12 @@ COPY . .
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o main ./cmd/payments-api
 
-FROM gcr.io/distroless/static:nonroot as runtime
+FROM gcr.io/distroless/static:nonroot AS runtime
 
 WORKDIR /app
 
 COPY --from=build /app/main .
+COPY --from=build /app/config ./config
 
 EXPOSE 8080
 EXPOSE 9090
