@@ -5,7 +5,10 @@ contract; the platform builds, deploys, exposes and observes it, with secure def
 baked in.
 
 > **Status:** Phases 0–3 complete: AWS foundation, platform components, and a
-> hand-built golden path (`examples/payments-api`) running end to end.
+> hand-built golden path (`examples/payments-api`) running end to end. Phase 4 in
+> progress: the Forge controller renders every resource a service needs from a
+> ForgeService and reports its status. It runs from a workstation against the
+> cluster until it is deployed in-cluster.
 
 ## What it does
 
@@ -41,7 +44,11 @@ See the [architecture document](docs/architecture.md) for the full design and th
 | `charts/platform/` | Argo CD Applications for platform components |
 | `charts/<service>/` | Kustomize manifests per service |
 | `examples/payments-api/` | Sample Go service used to prove the golden path |
-| `cmd/`, `pkg/`, `internal/` | Forge CLI and controller |
+| `pkg/contract/v1alpha1/` | The ForgeService contract; the CRD is generated from it |
+| `internal/controller/` | Reconciler, renderers and status |
+| `cmd/forge-controller/` | Controller entrypoint |
+| `config/` | Generated CRD and RBAC, and a sample ForgeService |
+| `docs/` | Architecture, service checklist, contract decisions |
 | `.github/workflows/` | Pull request checks and deploy pipeline |
 
 ## Prerequisites
@@ -61,14 +68,16 @@ To run it yourself, replace these values:
 | AWS account ID (ECR address) | `.github/workflows/deploy.yaml`, `charts/payments/kustomization.yaml` |
 | Domain (`forgeappservices.com`) | `infra/terraform/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, `charts/payments/payments-ingress.yaml` |
 | GitHub repository URL | `charts/platform/*.yaml` (`repoURL`), `go.mod` |
+| Sample service image and host | `config/samples/payments/forgeservice.yaml` |
+| Public subnet CIDRs, monitoring namespace | Controller flags (see [Running the controller](#running-the-controller)) |
 | Terraform variables (admin role ARN, GitHub repository for CI) | copy each `terraform.tfvars.example` to `terraform.tfvars` and fill in |
 | GitHub Actions secrets | `ROLE_ARN`, `AWS_REGION`, `DEPLOY_KEY` (a deploy key with write access) |
 
 The region is `us-east-1` throughout; changing it means updating the same files.
 
 These values are currently repeated across files. Consolidating them into Terraform
-variables and, from Phase 4, controller configuration is planned, so that adapting
-Forge to another account means editing one place per value.
+variables, and giving the controller a ConfigMap in place of flags, is planned, so
+that adapting Forge to another account means editing one place per value.
 
 ## Getting started
 
@@ -83,4 +92,30 @@ Then build and tear down the platform as needed:
     make up      # build the cluster; Argo CD installs the rest
     make down    # tear it all down
 
-Day-to-day access and troubleshooting: [`docs/operations.md`](docs/operations.md).
+## Running the controller
+
+The CRD and RBAC are applied by hand for now and do not survive teardown, so apply
+them after each `make up`:
+
+    kubectl apply -f config/crd/
+    kubectl apply -f config/rbac/namespace.yaml
+    kubectl apply -f config/rbac/
+
+Run the controller against the cluster, then create a service:
+
+    go run ./cmd/forge-controller \
+      --alb-subnet-cidrs=10.20.0.0/24,10.20.1.0/24 \
+      --monitoring-namespace=kube-prometheus
+
+    kubectl create namespace forge-test
+    kubectl apply -n forge-test -f config/samples/payments/forgeservice.yaml
+    kubectl get fsvc -n forge-test
+
+The CIDRs are the public subnets, where the ALB runs. The sample uses the same host as
+the hand-written payments service; give it another host if both are running.
+
+After changing the contract types or the RBAC markers, regenerate the CRD, deep-copy
+code and ClusterRole:
+
+    go tool controller-gen object crd rbac:roleName=forge-controller paths=./... \
+      output:crd:dir=./config/crd output:rbac:dir=./config/rbac

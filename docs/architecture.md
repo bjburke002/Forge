@@ -2,7 +2,7 @@
 
 *Architecture, Design Decisions, and Build Strategy*
 
-Revision 2.3  ·  October 2026  
+Revision 2.4  ·  October 2026  
 Supersedes Revision 1 (Forge — AWS Developer Platform Architecture)  
 Delivery window: 13 weeks  ·  Cost ceiling: \$50/month
 
@@ -96,6 +96,14 @@ Revision 2.3 (October 2026) records the rest of Phase 2 and the Phase 3 golden p
 - Karpenter nodes have a memory floor, and teardown checks for every resource type that has been left behind (§10.3, §22).
 - CI/CD is built: required pull request checks, and a deploy workflow that commits the new image tag. Service manifests live in this repository until the GitOps repository arrives in Phase 5 (§15).
 - The VPC CNI enforces NetworkPolicies (§10.2, §16.1).
+
+Revision 2.4 (October 2026) records Phase 4, the Forge controller, as built so far:
+
+- The contract is a Go type in pkg/contract/v1alpha1; the CRD, deep-copy code and RBAC are generated from it by controller-gen (§9).
+- The controller renders every resource payments-api proved by hand, from the ServiceAccount to the ServiceMonitor, and applies them with server-side apply (§9).
+- Status reports Ready, Progressing and Degraded from the Deployment, so a broken rollout that is still serving the old version reads Ready and Degraded together (§9).
+- Installation values reach the controller as required flags until its ConfigMap exists (§9, §24).
+- Teardown waits for Karpenter to terminate its nodes, and the leftover check covers the EKS cluster security group (§22).
 
 ## 3. Non-Goals
 
@@ -323,6 +331,12 @@ status:
 | Namespace and Application | - | Readiness-gate injection label on the namespace; Argo CD sync wave after the monitoring stack, with retry and CreateNamespace. |
 
 The right-hand column is the platform's opinion; it never appears in a developer's Service. The middle column is the contract. Anything that ends up in neither is a gap to close before Phase 4.
+
+**As built.** The controller uses controller-runtime without a kubebuilder scaffold. Each reconcile renders every child resource as an apply configuration and applies it with server-side apply under one field owner, forge-controller. Server-side apply sends only the fields Forge sets, so API-server defaults, the HPA's replica count and the readiness gates the Load Balancer Controller injects are left alone, and an unchanged object is not rewritten. Every child has an owner reference to its ForgeService and is watched, so an edited or deleted child is restored within seconds and deleting the ForgeService removes them all. Removing the ingress block deletes the Ingress, but only one the ForgeService owns. ServiceMonitor apply configurations come from the Prometheus Operator's client module, pinned to v0.93.1: later releases are built against the next Kubernetes minor version, which controller-runtime does not yet support.
+
+Status is computed after the applies, from the Deployment. Ready means the service is serving, with at least minReplicas pods available. Progressing is true while a rollout is under way. Degraded is true when an apply failed or the rollout exceeded its progress deadline, with the cause in its message. A rollout of a broken image therefore reads Ready and Degraded together: the old version is still serving, and the latest change failed. Reporting it as not Ready would announce an outage that is not happening. A failed apply is recorded in status before the reconcile returns the error for retry, and status is written only when it changes.
+
+The two installation values the renderers need, the public subnet CIDRs for the NetworkPolicy and the monitoring namespace, are passed as required flags until the controller's ConfigMap exists (§24). The controller refuses to start without valid CIDRs: an empty list would render an ingress rule with no sources, which allows traffic from anywhere.
 
 ## 10. AWS Foundation
 
@@ -747,7 +761,7 @@ forge/
 ├── internal/
 │   ├── controller/             # reconciliation logic and renderers
 │   ├── gitops/  status/  slo/
-├── config/                     # generated CRDs, RBAC
+├── config/                     # generated CRD and RBAC, sample ForgeService
 ├── infra/terraform/
 │   ├── main.tf  terraform.tf  providers.tf  backend.tf   # main root
 │   ├── makefile                # make up / down / plan / validate
@@ -814,7 +828,7 @@ Rates are for us-east-1, which has the same list prices as us-east-2 for every l
 
 > **The finding.** Under teardown discipline the budget is not tight — there is roughly 3x headroom over the realistic working pattern. Without teardown it is unreachable by a factor of 3.6, and the EKS control plane alone consumes 146% of it. This is why teardown automation is Phase 1 work with an exit criterion, not a cleanup task deferred to the end.
 
-Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open; a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance holds the cluster security group and blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
+Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, waiting until Karpenter has terminated every node, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open (without the wait, a node still draining when the destroy began outlived Karpenter, held a subnet, and left the EKS cluster security group behind); a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups, the EKS cluster security group or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance or security group blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
 
 ## 23. Definition of Done
 
@@ -883,7 +897,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | AWS access for services | Decided | Not part of the contract. A service that calls AWS gets an IAM role and Pod Identity association from Terraform, bound to its ServiceAccount (<svc>-sa in its namespace). The controller stays limited to Kubernetes objects (§7), and every AWS permission goes through a reviewed Terraform change. ACK remains an option if self-service AWS access is ever wanted. Built when the first service needs AWS access; the design is in §9. |
 | GitOps repository credential | Open | The workflow token cannot push to another repository. Phase 5 needs a deploy key on the GitOps repository or a GitHub App. |
 | terraform plan in CI | Deferred | Needs a separate read-only role with state access. Only the persistent root's plan is meaningful; the main root is usually torn down. |
-| Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and, from Phase 4, the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Scheduled just before Phase 4. |
+| Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Deferred until the controller runs in the cluster; until then it takes the values it needs as required flags (§9). |
 | Monitoring CRDs | Resolved | The CRDs install from a separate prometheus-operator-crds Application at wave 0, version-matched to kube-prometheus-stack and protected from pruning (§14). |
 
 **Future extensions.** The ECS and other-language rows are candidates once the initial delivery is complete, because each proves the contract from a different side: the same Service runs on a second runtime, or the same pipeline builds a second language. Both are cheaper to keep possible than to retrofit, which is why the contract stays free of runtime and language details and the controller already mounts a writable /tmp.
