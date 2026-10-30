@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -42,6 +43,9 @@ func (r *ForgeServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Get(ctx, req.NamespacedName, &fs); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
+	// Taking the fsvc status before any child resources are applied
+	old := fs.Status.DeepCopy()
 
 	logger.Info("reconciling", "name", fs.Name, "image", fs.Spec.Image)
 
@@ -77,13 +81,37 @@ func (r *ForgeServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
+	// If there's an error, we keep it to pass to the status cycles
+	var applyErr error
 	for _, obj := range objs {
 		if err := r.Apply(ctx, obj, client.FieldOwner(resources.FieldOwner), client.ForceOwnership); err != nil {
-			return ctrl.Result{}, err
+			applyErr = err
+			break
 		}
 	}
-	return ctrl.Result{}, nil
 
+	// Grab the deployment object from fs, to use in updating statuses
+	var deploy appsv1.Deployment
+	key := client.ObjectKey{Namespace: fs.Namespace, Name: fs.Name + "-deployment"}
+	if err := r.Get(ctx, key, &deploy); client.IgnoreNotFound(err) != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Update the subresource Statuses
+	// func lives in controller/status.go
+	updateStatus(&fs, &deploy, applyErr)
+
+	// If the updated status is different than the stored old status, update the watched fsvc
+	if !equality.Semantic.DeepEqual(old, &fs.Status) {
+		if err := r.Status().Update(ctx, &fs); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+
+	}
+	return ctrl.Result{}, applyErr
 }
 
 func (r *ForgeServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
