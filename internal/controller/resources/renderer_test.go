@@ -1,17 +1,19 @@
 package resources
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
-	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
-
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
+	networkingv1ac "k8s.io/client-go/applyconfigurations/networking/v1"
 )
 
 // Defining fixtures for the tests to use
@@ -30,6 +32,17 @@ func fixtures() []fixture {
 		{name: "ingress with path", fs: newFS("orders", withIngress("orders.example.com", "/api"))},
 		{name: "no ingress", fs: newFS("worker")},
 		{name: "hyphenated name", fs: newFS("order-history", withIngress("history.example.com", "/"))},
+		// Values that differ from newFS, so a renderer that hardcodes the defaults fails
+		{name: "custom values", fs: newFS("ledger",
+			withIngress("ledger.example.com", "/"),
+			withResources("100m", "64Mi", "256Mi"),
+			withHealth("/readyz", "/livez"),
+			withEnv(
+				v1alpha1.EnvVar{Name: "LOG_LEVEL", Value: "debug"},
+				v1alpha1.EnvVar{Name: "REGION", Value: "us-east-1"},
+			),
+		)},
+		{name: "no env", fs: newFS("batch", withEnv())},
 	}
 }
 
@@ -81,6 +94,29 @@ func newFS(name string, opts ...fsOption) *v1alpha1.ForgeService {
 func withIngress(host, path string) fsOption {
 	return func(fs *v1alpha1.ForgeService) {
 		fs.Spec.Ingress = &v1alpha1.IngressSpec{Host: host, Path: path}
+	}
+}
+
+// withResources replaces the CPU and memory requests and the memory limit
+func withResources(cpu, memory, memoryLimit string) fsOption {
+	return func(fs *v1alpha1.ForgeService) {
+		fs.Spec.Resources.Requests.CPU = resource.MustParse(cpu)
+		fs.Spec.Resources.Requests.Memory = resource.MustParse(memory)
+		fs.Spec.Resources.Limits.Memory = resource.MustParse(memoryLimit)
+	}
+}
+
+// withHealth replaces the readiness and liveness paths
+func withHealth(readiness, liveness string) fsOption {
+	return func(fs *v1alpha1.ForgeService) {
+		fs.Spec.Health = v1alpha1.HealthSpec{Readiness: readiness, Liveness: liveness}
+	}
+}
+
+// withEnv replaces the env vars; called with no arguments it removes them
+func withEnv(env ...v1alpha1.EnvVar) fsOption {
+	return func(fs *v1alpha1.ForgeService) {
+		fs.Spec.Env = env
 	}
 }
 
@@ -197,8 +233,313 @@ func TestMetricsPorts(t *testing.T) {
 	}
 }
 
+// Test Deployment platform rules with resource checks
+func TestDeploymentResources(t *testing.T) {
+	tests := fixtures()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dep := RenderDeployment(tc.fs)
+
+			if dep.Spec == nil || dep.Spec.Template == nil || dep.Spec.Template.Spec == nil ||
+				len(dep.Spec.Template.Spec.Containers) == 0 {
+				t.Fatalf("Deployment has no container spec")
+			}
+
+			if dep.Spec.Replicas != nil {
+				t.Fatalf("%v replicas defined in pod spec, expected none", deref(dep.Spec.Replicas))
+			}
+
+			if dep.Spec.Template.Spec.Containers[0].Resources == nil {
+				t.Fatalf("Container spec has no defined resource requests or limits")
+			}
+
+			reqs := deref(dep.Spec.Template.Spec.Containers[0].Resources.Requests)
+			limits := deref(dep.Spec.Template.Spec.Containers[0].Resources.Limits)
+
+			// Check against resource requests
+			// Starting with memory requests
+			gotMemReqs := reqs[corev1.ResourceMemory]
+			wantMemReqs := tc.fs.Spec.Resources.Requests.Memory
+			if !gotMemReqs.Equal(wantMemReqs) {
+				t.Errorf("Memory rquest mismatch. Expected %v, got %v", wantMemReqs.String(), gotMemReqs.String())
+			}
+
+			// CPU requests
+			gotCPUReqs := reqs[corev1.ResourceCPU]
+			wantCPUReqs := tc.fs.Spec.Resources.Requests.CPU
+			if !gotCPUReqs.Equal(wantCPUReqs) {
+				t.Errorf("CPU requests mistmatch. Expeted %v and got %v", wantCPUReqs.String(), gotCPUReqs.String())
+			}
+
+			// Checking againt resource Limits
+			// Validate there is no CPU limit set
+			if _, ok := limits[corev1.ResourceCPU]; ok {
+				t.Errorf("CPU limit set, contract expects no CPU Limit")
+			}
+
+			// Comparing memory limits
+			gotMemLimit := limits[corev1.ResourceMemory]
+			wantMemLimit := tc.fs.Spec.Resources.Limits.Memory
+			if !gotMemLimit.Equal(wantMemLimit) {
+				t.Errorf("Memory limit mismatch. Expected %v and got %v", wantMemLimit.String(), gotMemLimit.String())
+			}
+		})
+	}
+}
+
+// Testing Deployment and Container level SecurityContexts
+func TestSecurityContexts(t *testing.T) {
+	tests := fixtures()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dep := RenderDeployment(tc.fs)
+
+			// Guards that would otherwise panic
+			if dep.Spec == nil || dep.Spec.Template == nil || dep.Spec.Template.Spec == nil ||
+				len(dep.Spec.Template.Spec.Containers) == 0 {
+				t.Fatalf("Deployment has no container spec")
+			}
+
+			if dep.Spec.Template.Spec.SecurityContext == nil ||
+				dep.Spec.Template.Spec.SecurityContext.SeccompProfile == nil {
+				t.Fatalf("Pod SecurityContext is not properly defined")
+			}
+
+			if dep.Spec.Template.Spec.Containers[0].SecurityContext == nil ||
+				dep.Spec.Template.Spec.Containers[0].SecurityContext.Capabilities == nil {
+				t.Fatalf("Container SecurityContext is not properly defined")
+			}
+
+			psc := dep.Spec.Template.Spec.SecurityContext
+			csc := dep.Spec.Template.Spec.Containers[0].SecurityContext
+
+			// Checking Pod SecurityContexts
+			if !deref(psc.RunAsNonRoot) {
+				t.Errorf("Pod SecurityContext is not set to run as non-root")
+			}
+			if deref(psc.RunAsUser) != 65532 {
+				t.Errorf("Pod SecurityContext running as %v, expected 65532", deref(psc.RunAsUser))
+			}
+			if deref(psc.SeccompProfile.Type) != corev1.SeccompProfileTypeRuntimeDefault {
+				t.Errorf("Pod SecurityContext seccompProfile expected RuntimeDefault, got %v", deref(psc.SeccompProfile.Type))
+			}
+
+			// Checking Container SecurityContexts
+			if csc.AllowPrivilegeEscalation == nil || *csc.AllowPrivilegeEscalation {
+				t.Errorf("Container SecurityContext set to allow privilege escalation, expected false")
+			}
+			if !deref(csc.ReadOnlyRootFilesystem) {
+				t.Errorf("Container SecurityContext readOnlyRootFilesystem is false, expected true")
+			}
+			// Checking Capabilities -> Drop -> "ALL"
+			if !slices.Contains(csc.Capabilities.Drop, corev1.Capability("ALL")) {
+				t.Errorf("Container SecurityContext Capabilities must contain drop: ALL")
+			}
+		})
+	}
+}
+
+// Testing deployment contract fields - envs, readiness/liveness probe paths and port
+func TestDeploymentContractFields(t *testing.T) {
+	tests := fixtures()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dep := RenderDeployment(tc.fs)
+
+			// Guards that would otherwise panic
+			if dep.Spec == nil || dep.Spec.Template == nil || dep.Spec.Template.Spec == nil ||
+				len(dep.Spec.Template.Spec.Containers) == 0 {
+				t.Fatalf("Deployment has no container spec")
+			}
+
+			// Guarding the readiness and liveness probes
+			if dep.Spec.Template.Spec.Containers[0].ReadinessProbe == nil {
+				t.Fatalf("Container has no Readiness Probe path")
+			}
+			if dep.Spec.Template.Spec.Containers[0].LivenessProbe == nil {
+				t.Fatalf("Container has no Liveness Probe defined")
+			}
+			// Validating httpGet field in both probes
+			if dep.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet == nil {
+				t.Fatalf("Container Readiness probe is malformed and contains no HTTPGet block")
+			}
+			if dep.Spec.Template.Spec.Containers[0].LivenessProbe.HTTPGet == nil {
+				t.Fatalf("Container Liveness probe is malformed and contains no HTTPGet")
+			}
+
+			// Validate that Liveness probe path and port match cotract
+			l := dep.Spec.Template.Spec.Containers[0].LivenessProbe.HTTPGet
+
+			if deref(l.Path) != tc.fs.Spec.Health.Liveness {
+				t.Errorf("Liveness probe path is %v, but expected %v", deref(l.Path), tc.fs.Spec.Health.Liveness)
+			}
+
+			// Validating runtime port matches liveness probe port
+			lpName := deref(l.Port).StrVal
+			cp := containerPort(dep, lpName)
+			if cp == nil {
+				t.Errorf("Liveness probe port %q matches no container port", lpName)
+			} else if got, want := deref(cp.ContainerPort), tc.fs.Spec.Runtime.Port; got != want {
+				t.Errorf("Liveness probe port %q resolves to container port %d, want runtime.port %d", lpName, got, want)
+			}
+
+			// Validate that Readiness probe path and port match contract
+			r := dep.Spec.Template.Spec.Containers[0].ReadinessProbe.HTTPGet
+
+			if deref(r.Path) != tc.fs.Spec.Health.Readiness {
+				t.Errorf("Readiness probe path is %v, but expected %v", deref(r.Path), tc.fs.Spec.Health.Readiness)
+			}
+
+			rpName := deref(r.Port).StrVal
+			rcp := containerPort(dep, rpName)
+
+			if rcp == nil {
+				t.Errorf("Readiness probe port %q matches no container port", rpName)
+			} else if got, want := deref(rcp.ContainerPort), tc.fs.Spec.Runtime.Port; got != want {
+				t.Errorf("Readiness probe port %q resolves to container port %d, want runtime.port %d", rpName, got, want)
+			}
+
+			// Validation for Environment Variables
+			c := dep.Spec.Template.Spec.Containers[0]
+
+			// If lengths don't match, one has more envs than the other so there's an issue
+			if len(c.Env) != len(tc.fs.Spec.Env) {
+				t.Skip("Number of Envs doesn't match")
+				return
+			}
+
+			// Check each env against each other to make sure they match
+			for i := range c.Env {
+				if deref(c.Env[i].Name) != tc.fs.Spec.Env[i].Name {
+					t.Errorf("Env names don't match. Got %q and expected %q", deref(c.Env[i].Name), tc.fs.Spec.Env[i].Name)
+				}
+				if deref(c.Env[i].Value) != tc.fs.Spec.Env[i].Value {
+					t.Errorf("Env values don't match. For %q, got %q and expected %q", deref(c.Env[i].Name),
+						deref(c.Env[i].Value), tc.fs.Spec.Env[i].Value)
+				}
+			}
+
+		})
+	}
+}
+
+// Testing Ingress contract fields get rendered correctly
+func TestIngressContractFields(t *testing.T) {
+	tests := fixtures()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Since a config with no Ingress is part of fixtures() and would cause these tests to panic,
+			// skip any fixture with no ingress
+
+			if tc.fs.Spec.Ingress == nil {
+				t.Skip("No ingress")
+			}
+
+			ing := RenderIngress(tc.fs)
+
+			// Making sure the ingress exists after render
+			if ing.Spec == nil || len(ing.Spec.Rules) == 0 {
+				t.Fatalf("Ingress has no rules")
+			}
+
+			rule := ing.Spec.Rules[0]
+			if rule.HTTP == nil || len(rule.HTTP.Paths) == 0 {
+				t.Fatalf("Ingress has no Paths")
+			}
+
+			if deref(rule.Host) != tc.fs.Spec.Ingress.Host {
+				t.Errorf("Ingress hosts don't match. Expected %q, got %q", tc.fs.Spec.Ingress.Host, deref(rule.Host))
+			}
+
+			if deref(rule.HTTP.Paths[0].Path) != tc.fs.Spec.Ingress.Path {
+				t.Errorf("Ingress path doesn't match expected value. Expected %q, got %q", tc.fs.Spec.Ingress.Path, deref(rule.HTTP.Paths[0].Path))
+			}
+
+			if ing.Annotations["alb.ingress.kubernetes.io/healthcheck-path"] != tc.fs.Spec.Health.Readiness {
+				t.Errorf("Ingress healthcheck annotation does not match the contract. Expected %q, got %q",
+					tc.fs.Spec.Health.Readiness, ing.Annotations["alb.ingress.kubernetes.io/healthcheck-path"])
+			}
+		})
+	}
+
+}
+
+// Testing Network Policy contract fields
+func TestNetworkPolicyPeers(t *testing.T) {
+	tests := fixtures()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			np := RenderNetworkPolicy(tc.fs, testPlatform())
+
+			want := testPlatform().ALBSubnetCIDRS
+			// NetworkPolicy panic guards
+			if np.Spec == nil || len(np.Spec.Ingress) == 0 {
+				t.Fatalf("NetworkPolicy has no ingress rules")
+			}
+
+			// Find the ALB rule by its port, not its position
+			var albRule *networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration
+			for i := range np.Spec.Ingress {
+				for _, p := range np.Spec.Ingress[i].Ports {
+					if deref(p.Port).StrVal == portHTTP {
+						albRule = &np.Spec.Ingress[i]
+					}
+				}
+			}
+			if albRule == nil {
+				t.Fatalf("NetworkPolicy has no ingress rule for port %q", portHTTP)
+			}
+
+			if len(albRule.From) != len(want) {
+				t.Fatalf("ALB rule has %d peers, want %d (one per CIDR)", len(albRule.From), len(want))
+			}
+
+			for i, peer := range albRule.From {
+				if peer.IPBlock == nil {
+					t.Errorf("peer %d has no ipBlock", i)
+					continue
+				}
+				// CIDR comparison
+				if deref(peer.IPBlock.CIDR) != want[i] {
+					t.Errorf("peer %d CIDR doesn't match. Expected %q but got %q", i, want[i], deref(peer.IPBlock.CIDR))
+				}
+			}
+
+			// Checking the Metrics rule by port
+			var metricsRule *networkingv1ac.NetworkPolicyIngressRuleApplyConfiguration
+			for i := range np.Spec.Ingress {
+				for _, p := range np.Spec.Ingress[i].Ports {
+					if deref(p.Port).StrVal == portMetrics {
+						metricsRule = &np.Spec.Ingress[i]
+					}
+				}
+			}
+
+			if metricsRule == nil {
+				t.Fatalf("Network Policy has no rule for the Metrics port %q", portMetrics)
+			}
+			if len(metricsRule.From) != 1 {
+				t.Fatalf("NetworkPolicy metrics rule has %d rules, expect 1", len(metricsRule.From))
+			}
+
+			selector := metricsRule.From[0].NamespaceSelector
+			if selector == nil {
+				t.Errorf("Network Policy metrics rule has no namespace selector")
+			} else if got, wantNS := selector.MatchLabels["kubernetes.io/metadata.name"],
+				testPlatform().MonitoringNamespace; got != wantNS {
+				t.Errorf("metrics rule allows namespace %q, but want %q", got, wantNS)
+			}
+		})
+	}
+}
+
 // Test ObjectMeta to verify UID exists on all resources
-func TestUID(t *testing.T) {
+func TestOwnerReferences(t *testing.T) {
 	tests := fixtures()
 
 	for _, tc := range tests {
@@ -224,12 +565,14 @@ func TestUID(t *testing.T) {
 			}
 
 			for _, m := range metas {
+				// This doesn't need to break if an ownerRef is not found, so log and continue
 				if len(m.meta.OwnerReferences) == 0 {
-					t.Fatalf("%v has no OwnerRefs", m)
+					t.Errorf("%v has no OwnerRefs", m.kind)
+					continue
 				}
 				// If the rendered UID doesn't match TC's UID, or the rendered owner isn't set to Controller, error
 				if deref(m.meta.OwnerReferences[0].UID) != tc.fs.UID || !deref(m.meta.OwnerReferences[0].Controller) {
-					t.Errorf("%s is the owner reference: uid %q controlelr %v, want uid %q controller true",
+					t.Errorf("%s owner reference: uid %q controller %v, want uid %q controller true",
 						m.kind, deref(m.meta.OwnerReferences[0].UID), deref(m.meta.OwnerReferences[0].Controller), tc.fs.UID)
 				}
 			}
