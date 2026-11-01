@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
+	metav1ac "k8s.io/client-go/applyconfigurations/meta/v1"
 
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 )
@@ -193,6 +194,46 @@ func TestMetricsPorts(t *testing.T) {
 			}
 		})
 
+	}
+}
+
+// Test ObjectMeta to verify UID exists on all resources
+func TestUID(t *testing.T) {
+	tests := fixtures()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+
+			metas := []struct {
+				kind string
+				meta *metav1ac.ObjectMetaApplyConfiguration
+			}{
+				{"Deployment", RenderDeployment(tc.fs).ObjectMetaApplyConfiguration},
+				{"Service", RenderService(tc.fs).ObjectMetaApplyConfiguration},
+				{"HPA", RenderAutoscaler(tc.fs).ObjectMetaApplyConfiguration},
+				{"PDB", RenderPodDisruptionBudget(tc.fs).ObjectMetaApplyConfiguration},
+				{"NetworkPolicy", RenderNetworkPolicy(tc.fs, testPlatform()).ObjectMetaApplyConfiguration},
+				{"ServiceMonitor", RenderServiceMonitor(tc.fs).ObjectMetaApplyConfiguration},
+				{"ServiceAccount", RenderServiceAccount(tc.fs).ObjectMetaApplyConfiguration},
+			}
+			if tc.fs.Spec.Ingress != nil {
+				metas = append(metas, struct {
+					kind string
+					meta *metav1ac.ObjectMetaApplyConfiguration
+				}{"Ingress", RenderIngress(tc.fs).ObjectMetaApplyConfiguration})
+			}
+
+			for _, m := range metas {
+				if len(m.meta.OwnerReferences) == 0 {
+					t.Fatalf("%v has no OwnerRefs", m)
+				}
+				// If the rendered UID doesn't match TC's UID, or the rendered owner isn't set to Controller, error
+				if deref(m.meta.OwnerReferences[0].UID) != tc.fs.UID || !deref(m.meta.OwnerReferences[0].Controller) {
+					t.Errorf("%s is the owner reference: uid %q controlelr %v, want uid %q controller true",
+						m.kind, deref(m.meta.OwnerReferences[0].UID), deref(m.meta.OwnerReferences[0].Controller), tc.fs.UID)
+				}
+			}
+		})
 	}
 }
 
