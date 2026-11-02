@@ -204,7 +204,3 @@ type SLOSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	LatencyP99MS int32 `json:"latencyP99Ms,omitempty"`
 }
-
-func init() {
-	SchemeBuilder.Register(&ForgeService{}, &ForgeServiceList{})
-}
