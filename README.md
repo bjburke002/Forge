@@ -119,3 +119,15 @@ code and ClusterRole:
 
     go tool controller-gen object crd rbac:roleName=forge-controller paths=./... \
       output:crd:dir=./config/crd output:rbac:dir=./config/rbac
+
+## Running the tests
+
+The controller tests include envtest suites, which start a local kube-apiserver and
+etcd. `setup-envtest` downloads those binaries once and prints where they are:
+
+    export KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use 1.36 -p path)
+    go test ./...
+
+Without `KUBEBUILDER_ASSETS`, the `internal/controller` package fails at startup,
+because its tests share one envtest environment. The renderer tests need no API server
+and run on their own with `go test ./internal/controller/resources/`.
