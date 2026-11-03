@@ -51,7 +51,7 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t payments-api:$IMAGE_TAG -f Dockerfile .
+          docker build -t "payments-api:$IMAGE_TAG" -f Dockerfile .
 
   build-and-test-forge-controller:
     name: 'Test and Build Forge Controller'

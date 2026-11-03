@@ -1,0 +1,9 @@
+# Version Control
+.git
+
+# Folders
+examples/
+infra/
+charts/
+docs/
+*.txt

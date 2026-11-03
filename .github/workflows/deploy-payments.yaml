@@ -1,0 +1,66 @@
+name: Deploy Payments API
+
+on: 
+  push:
+    branches:
+      - main
+    paths: ['examples/payments-api/**', '.github/workflows/deploy-payments.yaml', '.github/workflows/build-image.yaml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+# One deploy at a time, so back-to-back merges bump the tag in order instead of racing.
+concurrency:
+  group: deploy-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-payments-api:
+    name: "Build and Deploy Payments API"
+    uses: './.github/workflows/build-image.yaml'
+    with:
+      ecr-repo-name: "forge/payments-api"
+      build-context: "examples/payments-api"
+      dockerfile: "examples/payments-api/Dockerfile"
+    secrets:
+      ROLE_ARN: ${{secrets.ROLE_ARN}}
+    permissions:
+      contents: read
+      id-token: write
+    
+  update-manifests:
+    name: "Update kustomize manifests"
+    runs-on: ubuntu-latest
+    needs: deploy-payments-api
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: 'charts/payments'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ssh-key: ${{secrets.DEPLOY_KEY}}
+        
+      - name: Set Image Tag
+        env:
+          IMAGE: ${{needs.deploy-payments-api.outputs.image}}
+        run: kustomize edit set image "payments-api=$IMAGE"
+
+      - name: Commit and Push
+        env: 
+          IMAGE_TAG: ${{github.sha}}
+          SERVICE: 'payments-api'
+        run: |
+          git config user.name 'forge-deploy-bot'
+          git config user.email '41898282+forge-deploy-bot@users.noreply.github.com'
+          git add kustomization.yaml
+          # Nothing to commit if this SHA is already deployed (e.g. a re-run).
+          git diff --cached --quiet && exit 0
+          git commit -m "deploy($SERVICE): $IMAGE_TAG"
+          git pull --rebase
+          git push          
+
+
+

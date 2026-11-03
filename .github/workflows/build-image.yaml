@@ -1,0 +1,72 @@
+name: "Build Docker Container"
+
+on:
+  workflow_call:
+    inputs:
+      ecr-repo-name:
+        required: true
+        type: string
+      build-context:
+        required: true
+        type: string
+      dockerfile:
+        required: true
+        type: string
+      aws-region:
+        required: false
+        type: string
+        default: "us-east-1"
+    secrets:
+      ROLE_ARN:
+        required: true
+    outputs:
+      image: 
+        description: "Image Tag reference"
+        value: ${{jobs.build-and-push-docker-image.outputs.image}}
+      digest:
+        description: "Image digest from ECR"
+        value: ${{jobs.build-and-push-docker-image.outputs.digest}}
+
+jobs:
+  build-and-push-docker-image:
+    name: "Build and Push Docker Image"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{steps.image.outputs.digest}}
+
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{secrets.ROLE_ARN}}
+          aws-region: ${{inputs.aws-region}}
+      
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Image to ECR 
+        id: image
+        env: 
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          ECR_REPO_NAME: ${{inputs.ecr-repo-name}}
+          DOCKERFILE: ${{inputs.dockerfile}}
+          BUILD_CONTEXT: ${{inputs.build-context}}
+        run: | 
+          IMAGE="$REGISTRY/$ECR_REPO_NAME:$IMAGE_TAG" 
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+          docker build -t "$IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
+          docker push "$IMAGE"
+
+          DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
