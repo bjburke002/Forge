@@ -36,7 +36,7 @@ jobs:
       id-token: write
     outputs:
       image: ${{ steps.image.outputs.image }}
-      digest: ${{steps.image.outputs.digest}}
+      digest: ${{steps.push.outputs.digest}}
 
 
     steps:
@@ -53,7 +53,7 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and Push Image to ECR 
+      - name: Build Container Image 
         id: image
         env: 
           REGISTRY: ${{ steps.ecr.outputs.registry }}
@@ -66,6 +66,23 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
           docker build -t "$IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
+    
+      - name: Scan container for vulnerabilities with Trivy
+        id: scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: 'v0.76.1'
+          image-ref: ${{steps.image.outputs.image}}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Push Container Image to ECR
+        id: push
+        env:
+          IMAGE: ${{steps.image.outputs.image}}
+        run: |
           docker push "$IMAGE"
 
           DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE")
