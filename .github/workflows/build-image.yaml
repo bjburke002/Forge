@@ -87,6 +87,15 @@ jobs:
         run: |
           trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
       
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0.24.3
+        with:
+          image: ${{steps.image.outputs.image}}
+          syft-version: v1.56.0
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-release-assets: false
+      
       - name: Push Container Image to ECR
         id: push
         env:
