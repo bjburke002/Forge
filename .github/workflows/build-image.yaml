@@ -36,7 +36,7 @@ jobs:
       id-token: write
     outputs:
       image: ${{ steps.image.outputs.image }}
-      digest: ${{steps.image.outputs.digest}}
+      digest: ${{steps.push.outputs.digest}}
 
 
     steps:
@@ -53,7 +53,7 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and Push Image to ECR 
+      - name: Build Container Image 
         id: image
         env: 
           REGISTRY: ${{ steps.ecr.outputs.registry }}
@@ -66,6 +66,32 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
           docker build -t "$IMAGE" -f "$DOCKERFILE" "$BUILD_CONTEXT"
+    
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.76.1"
+        run: |
+          cd "$RUNNER_TEMP"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "$base/$tarball"
+          curl -fsSLO "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          mkdir -p trivy-bin
+          tar -xzf "$tarball" -C trivy-bin trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+
+      - name: Scan Container Image with Trivy
+        env:
+          IMAGE: ${{steps.image.outputs.image}}
+        run: |
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
+      
+      - name: Push Container Image to ECR
+        id: push
+        env:
+          IMAGE: ${{steps.image.outputs.image}}
+        run: |
           docker push "$IMAGE"
 
           DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE")

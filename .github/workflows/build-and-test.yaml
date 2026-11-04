@@ -38,20 +38,47 @@ jobs:
           # Pin to version
           version: "2026.2.2"
           install-go: false
+          working-directory: examples/payments-api
       
       - name: Run Govulncheck
         uses: golang/govulncheck-action@v1
         with:
-          go-version-file: "go.mod"
+          work-dir: examples/payments-api
+          go-version-file: examples/payments-api/go.mod
+          cache-dependency-path: examples/payments-api/go.sum
       
       - name: Run Go Test
         run: go test ./...
       
       - name: Build image
+        id: build-payments-api
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t "payments-api:$IMAGE_TAG" -f Dockerfile .
+          IMAGE="forge/payments-api:$IMAGE_TAG" 
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          
+          docker build -t "$IMAGE" -f Dockerfile .
+      
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.76.1"
+        run: |
+          cd "$RUNNER_TEMP"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "$base/$tarball"
+          curl -fsSLO "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          mkdir -p trivy-bin
+          tar -xzf "$tarball" -C trivy-bin trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+      
+      - name: Scan payments-api Image with Trivy
+        env:
+          IMAGE: ${{steps.build-payments-api.outputs.image}}
+        run: |
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
 
   build-and-test-forge-controller:
     name: 'Test and Build Forge Controller'
@@ -93,17 +120,48 @@ jobs:
       - name: Ensure generated files are up to date 
         run: git diff --exit-code
 
-      - name: Set up envtest
-        run: echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use 1.36 -p path)" >> "$GITHUB_ENV"
-
       - name: Cache envtest binaries
         uses: actions/cache@v6
         with:
           path: ~/.local/share/kubebuilder-envtest
           key: envtest-${{runner.os}}-1.36
+
+      - name: Set up envtest
+        run: echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use 1.36 -p path)" >> "$GITHUB_ENV"
       
       - name: Run forge-controller unit tests
         run: go test ./...
+      
+      - name: Build Forge-Controller container image
+        id: build-forge-controller
+        env:
+          IMAGE_TAG: ${{github.sha}}
+        run: |
+          IMAGE="forge/forge-controller:$IMAGE_TAG" 
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          
+          docker build -t "$IMAGE" -f Dockerfile .
+      
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.76.1"
+        run: |
+          cd "$RUNNER_TEMP"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "$base/$tarball"
+          curl -fsSLO "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          mkdir -p trivy-bin
+          tar -xzf "$tarball" -C trivy-bin trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+      
+      - name: Scan forge-controller Image with Trivy
+        env:
+          IMAGE: ${{steps.build-forge-controller.outputs.image}}
+        run: |
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
+      
   test-terraform:
     name: 'Terraform fmt and validate'
     runs-on: ubuntu-latest
