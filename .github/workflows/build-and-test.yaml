@@ -60,14 +60,25 @@ jobs:
           
           docker build -t "$IMAGE" -f Dockerfile .
       
-      - name: Scan payments-api container for vulnerabilities with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0 # v0.36.0
-        with:
-          image-ref: ${{steps.build-payments-api.outputs.image}}
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: "CRITICAL,HIGH"
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.76.1"
+        run: |
+          cd "$RUNNER_TEMP"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "$base/$tarball"
+          curl -fsSLO "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          mkdir -p trivy-bin
+          tar -xzf "$tarball" -C trivy-bin trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+      
+      - name: Scan payments-api Image with Trivy
+        env:
+          IMAGE: ${{steps.build-payments-api.outputs.image}}
+        run: |
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
 
   build-and-test-forge-controller:
     name: 'Test and Build Forge Controller'
@@ -131,14 +142,25 @@ jobs:
           
           docker build -t "$IMAGE" -f Dockerfile .
       
-      - name: Scan forge-controller Container for vulnerabilities with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0 # v0.36.0
-        with:
-          image-ref: ${{steps.build-forge-controller.outputs.image}}
-          format: 'table'
-          exit-code: '1'
-          ignore-unfixed: true
-          severity: "CRITICAL,HIGH"
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: "0.76.1"
+        run: |
+          cd "$RUNNER_TEMP"
+          base="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}"
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSLO "$base/$tarball"
+          curl -fsSLO "$base/trivy_${TRIVY_VERSION}_checksums.txt"
+          grep " ${tarball}\$" "trivy_${TRIVY_VERSION}_checksums.txt" | sha256sum -c -
+          mkdir -p trivy-bin
+          tar -xzf "$tarball" -C trivy-bin trivy
+          echo "$RUNNER_TEMP/trivy-bin" >> "$GITHUB_PATH"
+      
+      - name: Scan forge-controller Image with Trivy
+        env:
+          IMAGE: ${{steps.build-forge-controller.outputs.image}}
+        run: |
+          trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$IMAGE"
       
   test-terraform:
     name: 'Terraform fmt and validate'
