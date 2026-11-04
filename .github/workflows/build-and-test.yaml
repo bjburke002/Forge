@@ -38,20 +38,37 @@ jobs:
           # Pin to version
           version: "2026.2.2"
           install-go: false
+          working-directory: examples/payments-api
       
       - name: Run Govulncheck
         uses: golang/govulncheck-action@v1
         with:
-          go-version-file: "go.mod"
+          work-dir: examples/payments-api
+          go-version-file: examples/payments-api/go.mod
+          cache-dependency-path: examples/payments-api/go.sum
       
       - name: Run Go Test
         run: go test ./...
       
       - name: Build image
+        id: build-payments-api
         env:
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t "payments-api:$IMAGE_TAG" -f Dockerfile .
+          IMAGE="forge/payments-api:$IMAGE_TAG" 
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          
+          docker build -t "$IMAGE" -f Dockerfile .
+      
+      - name: Scan payments-api container for vulnerabilities with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: "v0.76.1"
+          image-ref: ${{steps.build-payments-api.outputs.image}}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"
 
   build-and-test-forge-controller:
     name: 'Test and Build Forge Controller'
@@ -93,17 +110,38 @@ jobs:
       - name: Ensure generated files are up to date 
         run: git diff --exit-code
 
-      - name: Set up envtest
-        run: echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use 1.36 -p path)" >> "$GITHUB_ENV"
-
       - name: Cache envtest binaries
         uses: actions/cache@v6
         with:
           path: ~/.local/share/kubebuilder-envtest
           key: envtest-${{runner.os}}-1.36
+
+      - name: Set up envtest
+        run: echo "KUBEBUILDER_ASSETS=$(go run sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.24 use 1.36 -p path)" >> "$GITHUB_ENV"
       
       - name: Run forge-controller unit tests
         run: go test ./...
+      
+      - name: Build Forge-Controller container image
+        id: build-forge-controller
+        env:
+          IMAGE_TAG: ${{github.sha}}
+        run: |
+          IMAGE="forge/forge-controller:$IMAGE_TAG" 
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          
+          docker build -t "$IMAGE" -f Dockerfile .
+      
+      - name: Scan forge-controller Container for vulnerabilities with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: "v0.76.1"
+          image-ref: ${{steps.build-forge-controller.outputs.image}}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: "CRITICAL,HIGH"
+      
   test-terraform:
     name: 'Terraform fmt and validate'
     runs-on: ubuntu-latest
