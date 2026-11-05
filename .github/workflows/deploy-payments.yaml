@@ -41,7 +41,8 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          ssh-key: ${{secrets.DEPLOY_KEY}}
+          repository: bjburke002/forge-gitops
+          ssh-key: ${{secrets.GITOPS_DEPLOY_KEY}}
         
       - name: Set Image Tag
         env:
