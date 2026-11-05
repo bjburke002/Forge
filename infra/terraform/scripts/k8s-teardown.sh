@@ -23,6 +23,11 @@ kc() { kubectl --context "$CTX" "$@"; }
 # Stop Argo CD re-creating what we delete (no-op until Argo is installed).
 kc -n argocd scale statefulset argocd-application-controller --replicas=0 2>/dev/null || true
 
+# Delete any fsvc to stop them from reconciling and recreating the ingresses
+if kc get crd forgeservices.forge.dev > /dev/null 2>&1; then
+  kc delete forgeservices --all -A --timeout=10m
+fi
+
 # Each delete waits on the owning controller's finalizer, i.e. until the AWS resource is gone.
 kc delete ingress --all -A --timeout=10m
 kc get svc -A -o json |
