@@ -44,6 +44,11 @@ func (r *ForgeServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
+	// let gargabe collector remove children
+	if !fs.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
 	// Taking the fsvc status before any child resources are applied
 	old := fs.Status.DeepCopy()
 
