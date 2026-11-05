@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: forge-system
+resources:
+- crd/forge.dev_forgeservices.yaml
+- rbac/
+- manager/forge-controller-deployment.yaml
+
+images:
+- name: forge-controller
+  newName: 241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/forge-controller
+  newTag: 66a642fa9b29364d32b42daa9a0cff3a8e5057f4
+
+# Make sure the CRDs can't get blown away
+patches:
+- target:
+    kind: CustomResourceDefinition
+    name: forgeservices.forge.dev
+  patch: |-
+    apiVersion: apiextensions.k8s.io/v1
+    kind: CustomResourceDefinition
+    metadata:
+      name: forgeservices.forge.dev
+      annotations:
+        argocd.argoproj.io/sync-options: Prune=false,Delete=false
