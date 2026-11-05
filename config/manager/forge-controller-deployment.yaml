@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forge-controller-deployment
+  labels:
+    app: forge-controller
+    app.kubernetes.io/part-of: forge
+spec:
+  selector:
+    matchLabels:
+      app: forge-controller
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: forge-controller
+    spec:
+      containers:
+        - name: forge-controller
+          image: forge-controller
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          args:
+            - --leader-elect=true
+            - --alb-subnet-cidrs=10.20.0.0/24,10.20.1.0/24
+            - --monitoring-namespace=kube-prometheus
+            - --zap-devel=false
+      serviceAccountName: forge-controller
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+        runAsUser: 65532
