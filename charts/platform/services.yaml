@@ -18,7 +18,7 @@ spec:
       - path: services/*/dev
   template:
     metadata:
-      name: '{{.path.basename}}-{{index .path.segments 1}}'
+      name: '{{index .path.segments 1}}-{{.path.basename}}'
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
@@ -29,7 +29,7 @@ spec:
         path: '{{.path.path}}'
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{.path.basename}}-{{index .path.segments 1}}'
+        namespace: '{{index .path.segments 1}}-{{.path.basename}}'
       syncPolicy:
         managedNamespaceMetadata:
           labels:
