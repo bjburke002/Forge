@@ -1,0 +1,49 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: services
+  namespace: argocd
+  labels:
+    name: services
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: https://github.com/bjburke002/forge-gitops.git
+      revision: main 
+      directories:
+      - path: services/*/dev
+  template:
+    metadata:
+      name: '{{.path.basename}}-{{index .path.segments 1}}'
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/bjburke002/forge-gitops.git
+        targetRevision: main
+        path: '{{.path.path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.path.basename}}-{{index .path.segments 1}}'
+      syncPolicy:
+        managedNamespaceMetadata:
+          labels:
+            elbv2.k8s.aws/pod-readiness-gate-inject: enabled
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+          refresh: true
+        
