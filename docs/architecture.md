@@ -2,7 +2,7 @@
 
 *Architecture, Design Decisions, and Build Strategy*
 
-Revision 2.4  ·  October 2026  
+Revision 2.5  ·  November 2026  
 Supersedes Revision 1 (Forge — AWS Developer Platform Architecture)  
 Delivery window: 13 weeks  ·  Cost ceiling: \$50/month
 
@@ -104,6 +104,13 @@ Revision 2.4 (October 2026) records Phase 4, the Forge controller, as built so f
 - Status reports Ready, Progressing and Degraded from the Deployment, so a broken rollout that is still serving the old version reads Ready and Degraded together (§9).
 - Installation values reach the controller as required flags until its ConfigMap exists (§9, §24).
 - Teardown waits for Karpenter to terminate its nodes, and the leftover check covers the EKS cluster security group (§22).
+
+Revision 2.5 (November 2026) records the rest of Phase 4 and Phase 5:
+
+- The controller runs in the cluster as a platform Application, and its image tag is written back by CI (§9, §15).
+- Service desired state lives in a separate GitOps repository, forge-gitops, with one folder per service and an overlay per environment. An ApplicationSet and an AppProject in charts/platform turn each overlay into a restricted Application (§14, §19).
+- One reusable workflow builds every image: Trivy gate, SPDX SBOM, keyless cosign signature and attestation (§15).
+- Teardown deletes all ForgeServices before Ingresses, so the controller cannot recreate them (§22).
 
 ## 3. Non-Goals
 
@@ -338,6 +345,8 @@ Status is computed after the applies, from the Deployment. Ready means the servi
 
 The two installation values the renderers need, the public subnet CIDRs for the NetworkPolicy and the monitoring namespace, are passed as required flags until the controller's ConfigMap exists (§24). The controller refuses to start without valid CIDRs: an empty list would render an ingress rule with no sources, which allows traffic from anywhere.
 
+The controller runs in the cluster as the forge-controller Application (wave 1), built from config/: the generated CRD and RBAC, the Deployment in config/manager, and a kustomization that sets the namespace and image and marks the CRD Prune=false and Delete=false. It runs one replica with leader election, so a rolling update never has two leaders. A reconcile returns early when the ForgeService is being deleted: Argo CD deletes with foreground propagation, and recreating children while the garbage collector removes them is an endless loop.
+
 ## 10. AWS Foundation
 
 ### 10.1 VPC
@@ -524,7 +533,9 @@ forge create payments
 
 The ApplicationSet is the glue Revision 1 left unspecified. A git directory generator watching the GitOps repository turns each directory into an Argo Application automatically, so registering a new service requires no Argo configuration — the PR that adds the ForgeService CR is the entire registration process.
 
-**Two repositories, eventually.** Argo CD reads from this repository. Platform components are Applications in charts/platform: Terraform creates one root Application pointing there, and each component appears as its own Application with its own sync status and history. Until Phase 5, service manifests also live here, as Kustomize folders under charts/&lt;service&gt;. The separate GitOps repository and its ApplicationSet replace them in Phase 5, which moves CI's frequent image-tag commits out of the platform repository's history.
+**Two repositories.** Platform components are Applications in charts/platform in this repository: Terraform creates one root Application pointing there, and each component appears as its own Application with its own sync status and history. Service desired state lives in a separate repository, forge-gitops (layout in §19), which keeps CI's frequent image-tag commits out of the platform repository. The ApplicationSet and its AppProject live in charts/platform, not in forge-gitops, because they decide what may be deployed: anyone who can merge to forge-gitops can add a service folder, but not change the generator or loosen the project.
+
+**As built.** A git directory generator watches services/*/dev and services/*/prod in forge-gitops and creates one Application per folder, named and namespaced &lt;service&gt;-&lt;environment&gt;, with CreateNamespace and the readiness-gate label on the namespace (§11). The AppProject allows forge-gitops as the only source, namespaces ending in -dev or -prod on this cluster as the only destinations, ForgeService as the only namespaced kind and Namespace as the only cluster-scoped one, so a raw Deployment committed to forge-gitops is refused. Argo CD polls Git, so changes appear within about three minutes.
 
 **Bootstrap details.** Terraform installs Argo CD with the argo-cd Helm chart and creates the root Application with the argocd-apps chart. Argo CD has no ingress and is reached by port-forward, so its UI is only as exposed as the Kubernetes API. Child Applications are ordered with sync waves (below), which requires restoring Argo CD's health check for Application resources. The root Application deliberately has no deletion finalizer: teardown pauses Argo CD before terraform destroy, and a finalizer nobody processes would hang the destroy.
 
@@ -536,8 +547,8 @@ The ApplicationSet is the glue Revision 1 left unspecified. A git directory gene
 | -2 | karpenter-configs (NodePool, EC2NodeClass) | Karpenter |
 | -1 | external-secrets, cert-manager | Capacity from Karpenter |
 | 0 | external-secrets-configs (ClusterSecretStore), kube-prometheus-crds, LB Controller, ExternalDNS | ESO's CRDs; cert-manager for the LB Controller's certificate |
-| 1 | kube-prometheus-stack | The ClusterSecretStore and the monitoring CRDs |
-| 2 | Services (payments) | The ServiceMonitor CRD |
+| 1 | kube-prometheus-stack, forge-controller, the services AppProject | The ClusterSecretStore and the monitoring CRDs; the controller watches ServiceMonitors |
+| 2 | The services ApplicationSet (payments-dev, payments-prod) | The ForgeService CRD, the controller and the AppProject |
 
 **Charts under Argo CD.** Argo CD renders charts with helm template on every sync and never runs helm install, which breaks two common chart features. Values generated during rendering, such as Grafana's default admin password, change on every render, so the application never settles and self-heal turns that into a rollout loop. Helm hooks, such as kube-prometheus-stack's admission webhook Jobs, can finish without Argo CD noticing and stall the sync. The rules: secrets come from outside the chart via existingSecret and ESO; hooks are disabled where the chart allows; charts with large CRDs use ServerSideApply; certificates are issued by cert-manager inside the cluster rather than generated at render time (§11); and no Application gets auto-sync until it has stayed Synced across several refreshes.
 
@@ -582,9 +593,13 @@ GitHub Actions authenticates to AWS through the OIDC provider and a role whose t
 
 **Repositories on demand.** ECR repositories are not listed in Terraform. A repository creation template in the persistent root covers everything under forge/, and ECR creates a repository the first time CI pushes to a new name, applying immutable tags, encryption and the lifecycle rules (untagged images expire after seven days; the last 20 build images are kept). Scan on push is a registry-level rule for forge/\*. Onboarding a service therefore needs no infrastructure change, and teardown never touches the images.
 
-**As built.** Pull requests run Go vet and tests, a Docker build, and terraform fmt and validate for both roots; a ruleset makes both jobs required on main. That workflow has no path filter on purpose: a required check from a workflow that never starts stays pending and blocks the merge. The deploy workflow does use a path filter, running on pushes to main that touch the service or the workflow itself: it tests, builds and pushes the image tagged with the commit SHA, then commits the new tag to the service's Kustomize folder with kustomize edit set image in its full name=repository:tag form (the short form drops the repository and sends the cluster to Docker Hub). Deploys run one at a time through a concurrency group. Argo CD rolls the change out from there.
+**As built.** Pull requests run one job per Go module (payments-api and the controller) plus Terraform fmt and validate; all are required on main, and the ruleset also requires branches to be up to date, so main only ever holds exactly what CI tested. Each Go job runs go mod verify, go vet, staticcheck, govulncheck, the tests (envtest for the controller), a Docker build and a Trivy scan. The controller job also regenerates the CRD, deep-copy code and RBAC and fails if anything differs from what is committed. The workflow has no path filter on purpose: a required check from a workflow that never starts stays pending and blocks the merge. CodeQL runs through GitHub's default code scanning setup, with no workflow file: on every pull request, every push to main and weekly, with findings in the Security tab.
 
-**Pushing past branch protection.** The tag commit goes straight to main, so it must bypass the ruleset. GitHub's built-in workflow token cannot be added to a ruleset's bypass list on a personal repository, so the commit is pushed with a deploy key that can. Unlike the workflow token, deploy-key pushes trigger workflows, which is why the deploy path filter must never include the manifests it edits. The scanning, SBOM and signing steps in the diagram are not built yet, and in Phase 5 the tag commit moves to the GitOps repository, which needs its own cross-repository credential.
+Each image has its own deploy workflow with a path filter, and both call one reusable workflow, build-image.yaml, which builds, scans, generates the SBOM, pushes and signs. Tests are not repeated at deploy time. The payments workflow then commits the new tag to forge-gitops's dev overlay; the controller workflow commits it to config/ in this repository. Both use kustomize edit set image in its full name=repository:tag form (the short form drops the repository and sends the cluster to Docker Hub), and deploys run one at a time per image through a concurrency group.
+
+**Supply chain as built.** Trivy runs as the CLI, installed from its GitHub release at a pinned version and verified against the release checksum. No GitHub Action wraps it: in March 2026 attackers rewrote the tags of trivy-action and setup-trivy to credential-stealing code (CVE-2026-33634), and setup-trivy's download host later failed to resolve and blocked every build. The scan runs before the push, so a failing image never reaches ECR. Syft generates an SPDX SBOM from the built image, not the source tree. After the push, cosign signs the image digest and attaches the SBOM as a signed attestation, keyless, with the identity of build-image.yaml on main. ECR stores both as OCI referrers next to the image, without tags.
+
+**Pushing past branch protection.** Tag commits go straight to main, so they must bypass the ruleset. GitHub's built-in workflow token cannot be added to a ruleset's bypass list on a personal repository, and it cannot push to another repository, so each target has its own deploy key with write access: one on this repository for the controller's tag, one on forge-gitops for services. Unlike the workflow token, deploy-key pushes trigger workflows, which is why the controller's deploy path filter must never include config/, the folder it edits.
 
 **Keyless signing is the detail to get right.** cosign with GitHub OIDC binds the signature to the workflow identity — repository, ref, and workflow file — recorded in the Rekor transparency log. Kyverno then verifies against that identity rather than a public key. The guarantee is specific and strong: this image was built by this workflow, from this repository, on this branch, and nothing else can produce a signature that satisfies the policy. That is materially stronger than signing with a shared key.
 
@@ -714,22 +729,23 @@ Revision 1 did not address environments. Under a \$50 ceiling the answer is a si
 | Blast radius | Shared control plane, shared node pool, shared ALB. | Isolated per environment. |
 | Access | One RBAC model, namespace-scoped roles. | Separate credentials per environment. |
 
-The GitOps repository layout that supports this:
+The GitOps repository (forge-gitops) is laid out by service, then environment, so everything about a service is one folder and onboarding a service is one pull request:
 
 ```text
-gitops/
-├── base/
-│   └── payments/
-│       └── forgeservice.yaml      # ForgeService CR, no image tag
-├── overlays/
-│   ├── dev/
-│   │   └── payments/
-│   │       └── kustomization.yaml # image tag, minReplicas 1, no SLO
-│   └── prod/
-│       └── payments/
-│           └── kustomization.yaml # image tag, minReplicas 2, SLO 99.9
-└── applicationset.yaml            # git directory generator over overlays/*/*
+forge-gitops/
+└── services/
+    └── payments/
+        ├── base/
+        │   ├── forgeservice.yaml   # production values, placeholder image, no namespace, no env
+        │   ├── kustomizeconfig.yaml # teaches Kustomize that spec.image is an image field
+        │   └── kustomization.yaml
+        ├── dev/
+        │   └── kustomization.yaml  # payments-dev: image tag, env, minReplicas 1, dev host, no SLO
+        └── prod/
+            └── kustomization.yaml  # payments-prod: image tag, env
 ```
+
+The base holds production's values, so prod is the one environment defined without overrides. env lives only in the overlays: patches to a custom resource merge lists by replacing them, so an env list split between base and overlay would silently lose entries. The ApplicationSet and AppProject that read this repository live in charts/platform (§14).
 
 CI writes only to the dev overlay. Promotion to prod is always a human-merged pull request, so an automated pipeline can never push straight to production.
 
@@ -761,7 +777,7 @@ forge/
 ├── internal/
 │   ├── controller/             # reconciliation logic and renderers
 │   ├── gitops/  status/  slo/
-├── config/                     # generated CRD and RBAC, sample ForgeService
+├── config/                     # generated CRD and RBAC, controller Deployment, sample ForgeService
 ├── infra/terraform/
 │   ├── main.tf  terraform.tf  providers.tf  backend.tf   # main root
 │   ├── makefile                # make up / down / plan / validate
@@ -772,21 +788,20 @@ forge/
 ├── charts/
 │   ├── platform/               # app of apps: one Application per component
 │   ├── karpenter-config/       # NodePool + EC2NodeClass
-│   ├── external-secrets/       # ClusterSecretStore
-│   └── payments/               # Kustomize: one service, by hand (Phase 3)
+│   └── external-secrets/       # ClusterSecretStore
 ├── examples/payments-api/      # reference service, its own Go module
 │   ├── cmd/payments-api/       # main: two servers, graceful shutdown
 │   ├── internal/api/           # health, readiness, root handlers
 │   ├── internal/metrics/       # request metrics middleware
 │   └── Dockerfile
-├── .github/workflows/          # build-and-test (PRs), deploy (main)
+├── .github/workflows/          # build-and-test (PRs), build-image (reusable), deploy per image
 ├── policies/kyverno/
 ├── observability/
 ├── docs/                       # architecture, service checklist, contract decisions
 └── README.md
 ```
 
-Three structural notes. First, there is no charts/forge-service — application rendering belongs to the controller, and keeping a parallel Helm implementation is the duplication §2 removed; charts/payments is the hand-written specification the controller will reproduce, not a template. Second, the sample service is its own Go module, so its dependencies stay out of the platform's. Third, there is no separate ADR folder. The contested decisions are argued in place in this document, and the contract decisions are logged with their reasoning in docs/service-contract-decisions.md. The contested ones are: Terraform modules over Pulumi, controller over Helm, success rate over readiness, no REST API, single NAT gateway, ESO over CSI driver, one workload account under an Organization, and sync waves ordered by capacity.
+Three structural notes. First, there is no charts/forge-service — application rendering belongs to the controller, and keeping a parallel Helm implementation is the duplication §2 removed; the hand-written payments manifests that specified what the controller renders were retired once payments moved to forge-gitops (§14). Second, the sample service is its own Go module, so its dependencies stay out of the platform's. Third, there is no separate ADR folder. The contested decisions are argued in place in this document, and the contract decisions are logged with their reasoning in docs/service-contract-decisions.md. The contested ones are: Terraform modules over Pulumi, controller over Helm, success rate over readiness, no REST API, single NAT gateway, ESO over CSI driver, one workload account under an Organization, and sync waves ordered by capacity.
 
 ## 22. Cost Model
 
@@ -828,7 +843,7 @@ Rates are for us-east-1, which has the same list prices as us-east-2 for every l
 
 > **The finding.** Under teardown discipline the budget is not tight — there is roughly 3x headroom over the realistic working pattern. Without teardown it is unreachable by a factor of 3.6, and the EKS control plane alone consumes 146% of it. This is why teardown automation is Phase 1 work with an exit criterion, not a cleanup task deferred to the end.
 
-Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, waiting until Karpenter has terminated every node, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open (without the wait, a node still draining when the destroy began outlived Karpenter, held a subnet, and left the EKS cluster security group behind); a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups, the EKS cluster security group or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance or security group blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
+Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD, deletes every ForgeService (otherwise the controller recreates the Ingresses deleted next), and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, waiting until Karpenter has terminated every node, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open (without the wait, a node still draining when the destroy began outlived Karpenter, held a subnet, and left the EKS cluster security group behind); a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups, the EKS cluster security group or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance or security group blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
 
 ## 23. Definition of Done
 
@@ -895,7 +910,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | Second runtime: ECS on Fargate | Future | Keep EKS as the control plane; the controller renders AWS Controllers for Kubernetes (ACK) resources for services placed on ECS, so it still only writes Kubernetes objects. Open design question: the shared ALB, which the Load Balancer Controller owns. Estimate 80 to 120 hours for parity, 25 to 35 for a proof of concept behind its own ALB. |
 | Golden paths for other languages (.NET first) | Future | The contract is language-neutral and must stay so. A second language needs a forge create template, a CI workflow variant (tests and dependency scanning; build, scan, sign and push stay shared) and a minimal base image. Estimate 10 to 15 hours. |
 | AWS access for services | Decided | Not part of the contract. A service that calls AWS gets an IAM role and Pod Identity association from Terraform, bound to its ServiceAccount (<svc>-sa in its namespace). The controller stays limited to Kubernetes objects (§7), and every AWS permission goes through a reviewed Terraform change. ACK remains an option if self-service AWS access is ever wanted. Built when the first service needs AWS access; the design is in §9. |
-| GitOps repository credential | Open | The workflow token cannot push to another repository. Phase 5 needs a deploy key on the GitOps repository or a GitHub App. |
+| GitOps repository credential | Resolved | A deploy key with write access on forge-gitops, stored as a secret in this repository (§15). A GitHub App would scale better across many repositories. |
 | terraform plan in CI | Deferred | Needs a separate read-only role with state access. Only the persistent root's plan is meaningful; the main root is usually torn down. |
 | Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Deferred until the controller runs in the cluster; until then it takes the values it needs as required flags (§9). |
 | Monitoring CRDs | Resolved | The CRDs install from a separate prometheus-operator-crds Application at wave 0, version-matched to kube-prometheus-stack and protected from pruning (§14). |
