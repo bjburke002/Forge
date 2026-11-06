@@ -4,18 +4,18 @@ An AWS-native internal developer platform on EKS. Teams describe a service in a 
 contract; the platform builds, deploys, exposes and observes it, with secure defaults
 baked in.
 
-> **Status:** Phases 0–3 complete: AWS foundation, platform components, and a
-> hand-built golden path (`examples/payments-api`) running end to end. Phase 4 in
-> progress: the Forge controller renders every resource a service needs from a
-> ForgeService and reports its status. It runs from a workstation against the
-> cluster until it is deployed in-cluster.
+> **Status:** Phases 0–5 complete. The Forge controller renders every resource a service
+> needs from a ForgeService, and services deploy through a separate GitOps repository
+> ([forge-gitops](https://github.com/bjburke002/forge-gitops)) with signed, scanned images.
 
 ## What it does
 
 - **Ephemeral by design:** the platform is torn down nightly and rebuilt from code to
   keep costs low; only state that must survive lives in a separate Terraform root.
-- **GitOps:** Terraform builds AWS and bootstraps Argo CD; Argo CD installs everything
-  else from this repository.
+- **GitOps:** Terraform builds AWS and bootstraps Argo CD; Argo CD installs the platform
+  from this repository and services from forge-gitops.
+- **Supply chain:** every image is scanned with Trivy before it is pushed, and signed
+  keylessly with cosign alongside a signed SPDX SBOM.
 - **Shared ingress:** one ALB for all services, TLS from an ACM wildcard certificate,
   DNS managed by ExternalDNS.
 - **Spot-first capacity** via Karpenter, with hard limits as a cost guardrail.
@@ -27,9 +27,10 @@ baked in.
     Terraform ──> VPC · EKS · IAM · Argo CD
                                     │
                                     ▼
-               Argo CD (watches this repo) ──> platform components ──> services
+               Argo CD ──> platform components (this repo, charts/platform)
+                       └──> services (forge-gitops) ──> Forge controller ──> Deployment, Ingress, ...
                                     ▲
-    GitHub Actions ──> ECR ──> image tag commit
+    GitHub Actions ──> scan, SBOM, sign ──> ECR ──> image tag commit to forge-gitops
 
 See the [architecture document](docs/architecture.md) for the full design and the
 [contract decisions](docs/service-contract-decisions.md) for how the service contract was settled.
@@ -41,15 +42,14 @@ See the [architecture document](docs/architecture.md) for the full design and th
 | `infra/terraform/` | Main root: VPC, EKS, IAM, Karpenter, Argo CD bootstrap |
 | `infra/terraform/persistent/` | Resources that survive teardown (ECR template, CI role, certificate, secrets) |
 | `infra/terraform/modules/` | One module per foundation layer |
-| `charts/platform/` | Argo CD Applications for platform components |
-| `charts/<service>/` | Kustomize manifests per service |
+| `charts/platform/` | Argo CD Applications for platform components, the controller, and the services ApplicationSet and AppProject |
 | `examples/payments-api/` | Sample Go service used to prove the golden path |
 | `pkg/contract/v1alpha1/` | The ForgeService contract; the CRD is generated from it |
 | `internal/controller/` | Reconciler, renderers and status |
 | `cmd/forge-controller/` | Controller entrypoint |
-| `config/` | Generated CRD and RBAC, and a sample ForgeService |
+| `config/` | Generated CRD and RBAC, the controller Deployment and its kustomization, and a sample ForgeService |
 | `docs/` | Architecture, service checklist, contract decisions |
-| `.github/workflows/` | Pull request checks and deploy pipeline |
+| `.github/workflows/` | Pull request checks, the shared image build, and a deploy workflow per image |
 
 ## Prerequisites
 
@@ -65,13 +65,13 @@ To run it yourself, replace these values:
 | Value | Where |
 |---|---|
 | AWS account ID and state bucket | `infra/terraform/backend.tf`, `infra/terraform/persistent/backend.tf` |
-| AWS account ID (ECR address) | `.github/workflows/deploy.yaml`, `charts/payments/kustomization.yaml` |
-| Domain (`forgeappservices.com`) | `infra/terraform/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, `charts/payments/payments-ingress.yaml` |
-| GitHub repository URL | `charts/platform/*.yaml` (`repoURL`), `go.mod` |
+| AWS account ID (ECR address) | `config/kustomization.yaml`, the overlays in forge-gitops |
+| Domain (`forgeappservices.com`) | `infra/terraform/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, ingress hosts in forge-gitops |
+| GitHub repository URLs | `charts/platform/*.yaml` (`repoURL`), `go.mod` |
 | Sample service image and host | `config/samples/payments/forgeservice.yaml` |
-| Public subnet CIDRs, monitoring namespace | Controller flags (see [Running the controller](#running-the-controller)) |
+| Public subnet CIDRs, monitoring namespace | Controller arguments in `config/manager/forge-controller-deployment.yaml` |
 | Terraform variables (admin role ARN, GitHub repository for CI) | copy each `terraform.tfvars.example` to `terraform.tfvars` and fill in |
-| GitHub Actions secrets | `ROLE_ARN`, `AWS_REGION`, `DEPLOY_KEY` (a deploy key with write access) |
+| GitHub Actions secrets | `ROLE_ARN`, `DEPLOY_KEY` (write access to this repository), `GITOPS_DEPLOY_KEY` (write access to forge-gitops) |
 
 The region is `us-east-1` throughout; changing it means updating the same files.
 
@@ -92,27 +92,26 @@ Then build and tear down the platform as needed:
     make up      # build the cluster; Argo CD installs the rest
     make down    # tear it all down
 
-## Running the controller
+## Deploying a service
 
-The CRD and RBAC are applied by hand for now and do not survive teardown, so apply
-them after each `make up`:
+Argo CD installs the controller, its CRD and RBAC with the rest of the platform. A
+service is a folder in forge-gitops (`services/<name>/{base,dev,prod}`); the
+ApplicationSet creates an Application per environment, named and namespaced
+`<name>-dev` and `<name>-prod`. CI writes new image tags to the dev overlay; promoting
+to prod is a pull request copying the tag to the prod overlay.
 
-    kubectl apply -f config/crd/
-    kubectl apply -f config/rbac/namespace.yaml
-    kubectl apply -f config/rbac/
+## Running the controller locally
 
-Run the controller against the cluster, then create a service:
+For development, stop the in-cluster controller first so two controllers don't fight
+over the same objects. Disable auto-sync on the `forge-controller` Application (or
+self-heal restores the replica within moments), then:
 
+    kubectl scale deployment forge-controller-deployment -n forge-system --replicas=0
     go run ./cmd/forge-controller \
       --alb-subnet-cidrs=10.20.0.0/24,10.20.1.0/24 \
       --monitoring-namespace=kube-prometheus
 
-    kubectl create namespace forge-test
-    kubectl apply -n forge-test -f config/samples/payments/forgeservice.yaml
-    kubectl get fsvc -n forge-test
-
-The CIDRs are the public subnets, where the ALB runs. The sample uses the same host as
-the hand-written payments service; give it another host if both are running.
+Re-enable auto-sync when you're done; Argo CD restores the in-cluster controller.
 
 After changing the contract types or the RBAC markers, regenerate the CRD, deep-copy
 code and ClusterRole:
