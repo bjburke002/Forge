@@ -23,7 +23,7 @@ spec:
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
-      project: default
+      project: services-app-project
       source:
         repoURL: https://github.com/bjburke002/forge-gitops.git
         targetRevision: main

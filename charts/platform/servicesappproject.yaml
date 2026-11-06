@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: services-app-project
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    - argocd.argoproj.io/sync-wave "1"
+spec:
+  description: "Namespace and Kind governance for ForgeServices"
+  sourceRepos:
+    - "https://github.com/bjburke002/forge-gitops.git"
+  destinations:
+    - namespace: '*-dev'
+      server: 'https://kubernetes.default.svc'
+    - namespace: '*-prod'
+      server: 'https://kubernetes.default.svc'
+  namespaceResourceWhitelist:
+    - group: forge.dev
+      kind: ForgeService
+  clusterResourceWhitelist:
+    - group: ''
+      kind: Namespace
