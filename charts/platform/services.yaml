@@ -16,6 +16,7 @@ spec:
       revision: main 
       directories:
       - path: services/*/dev
+      - path: services/*/prod
   template:
     metadata:
       name: '{{index .path.segments 1}}-{{.path.basename}}'
