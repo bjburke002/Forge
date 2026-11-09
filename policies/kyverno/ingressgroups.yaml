@@ -3,6 +3,9 @@ kind: ValidatingPolicy
 metadata:
   name: verify-ingress-group-restricted-to-forge-controller
 spec:
+  evaluation:
+    background:
+      enabled: false
   validationActions:
     - Audit
   matchConstraints:
