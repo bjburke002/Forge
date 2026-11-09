@@ -18,7 +18,7 @@ spec:
   validations:
     - message: "Hostname is already in use."
       expression: |
-            !has(object.spec.rules) || !variables.ingresses.exists(i,
+            !has(object.spec.rules) || !dyn(variables.ingresses).exists(i,
             !(i.metadata.namespace == object.metadata.namespace && i.metadata.name == object.metadata.name) &&
             has(i.spec.rules) &&
             i.spec.rules.exists(ir, has(ir.host) &&
