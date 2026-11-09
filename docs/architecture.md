@@ -2,7 +2,7 @@
 
 *Architecture, Design Decisions, and Build Strategy*
 
-Revision 2.5  ·  November 2026  
+Revision 2.6  ·  November 2026  
 Supersedes Revision 1 (Forge — AWS Developer Platform Architecture)  
 Delivery window: 13 weeks  ·  Cost ceiling: \$50/month
 
@@ -111,6 +111,13 @@ Revision 2.5 (November 2026) records the rest of Phase 4 and Phase 5:
 - Service desired state lives in a separate GitOps repository, forge-gitops, with one folder per service and an overlay per environment. An ApplicationSet and an AppProject in charts/platform turn each overlay into a restricted Application (§14, §19).
 - One reusable workflow builds every image: Trivy gate, SPDX SBOM, keyless cosign signature and attestation (§15).
 - Teardown deletes all ForgeServices before Ingresses, so the controller cannot recreate them (§22).
+
+Revision 2.6 (November 2026) records Phase 6, admission policy:
+
+- Kyverno enforces seven policies at admission, written as CEL policy types: image signature and registry checks, Pod requirements, and three rules that protect the shared ALB (§16.2).
+- Pod Security Admission enforces the restricted profile on every service namespace, selected by a forge.dev/tenant label the ApplicationSet sets (§14, §16.2).
+- Karpenter only launches Nitro instances, which prefix delegation requires (§10.3).
+- Teardown stops Kyverno and deletes its webhooks first, so they cannot block the rest of teardown (§22).
 
 ## 3. Non-Goals
 
@@ -381,7 +388,7 @@ Pending pod
     v
 Karpenter NodePool
     |
-    +-- requirements: amd64, spot then on-demand, t/m/c, 2-4 vCPU, >= 4 GiB memory
+    +-- requirements: amd64, Nitro, spot then on-demand, t/m/c, 2-4 vCPU, >= 4 GiB memory
     +-- limits: cpu 20, memory 20Gi   (hard ceiling; cost guardrail)
     +-- disruption: consolidateAfter 2m, expireAfter 24h
     |
@@ -398,7 +405,7 @@ EC2 spot capacity
 
 **Supporting AWS pieces.** Karpenter v1.15 runs with the controller policy from Karpenter's own template for that version, kept in the repository as a versioned file. Its nodes run as a separate node role with an EC2_LINUX access entry, without which they launch but never join. An SQS queue fed by five EventBridge rules delivers spot interruption warnings, rebalance recommendations, instance state changes, scheduled maintenance and capacity reservation warnings, so nodes are drained before AWS reclaims them. The EC2 Spot service-linked role is created once in the persistent root, since a new account has none.
 
-**Two settings that are easy to miss.** The NodePool only allows amd64 instances, because CI builds amd64 images; otherwise Karpenter picks Graviton whenever it is cheaper and services fail to start. And the EC2NodeClass sets maxPods to 110, because Karpenter does not detect the VPC CNI's prefix delegation and would otherwise size nodes for about 11 pods.
+**Three settings that are easy to miss.** The NodePool only allows amd64 instances, because CI builds amd64 images; otherwise Karpenter picks Graviton whenever it is cheaper and services fail to start. The EC2NodeClass sets maxPods to 110, because Karpenter does not detect the VPC CNI's prefix delegation and would otherwise size nodes for about 11 pods. And the NodePool only allows Nitro instances (instance-hypervisor nitro), because prefix delegation needs Nitro: Karpenter once picked a t2.medium, where the CNI could assign about 15 pod IPs while maxPods allowed 110, and pods failed to start with no IP address. The Nitro t3 and t3a types cost less on demand than t2, so the requirement costs nothing.
 
 **Memory floor.** The NodePool also requires at least 4 GiB of memory per instance (instance-memory greater than 3071 MiB). Without it, Karpenter picked micro and small instances because they are cheapest per pod; on a 1 GiB node only about 515Mi was allocatable after the kubelet and DaemonSets, and Grafana never became Ready there. The floor matches the cost model's assumption of t3a.medium-class nodes and costs roughly \$1 to \$3 a month at expected usage; in return, bootstrap converges without manual intervention.
 
@@ -445,7 +452,7 @@ Target type ip routes directly to pod IPs rather than through NodePort, which re
 
 **Controller configuration.** The controller (v3.6.0) runs one replica and finds the VPC by its Name tag rather than its ID, so the configuration in Git stays valid across rebuilds that recreate the VPC. Setting the region and VPC explicitly also keeps it independent of instance metadata, which Karpenter's nodes block from pods by default.
 
-**A shared ALB is a shared risk.** Any namespace can join the forge-shared group, so anyone allowed to create an Ingress could add rules to the shared ALB, including rules for another service's hostname. A Kyverno policy restricts the group to Ingresses rendered by the Forge controller, and a second rejects any Ingress whose host is already used in the group (§16.2). One host per service is also why Ingresses carry no group.order: rules from different services can never match the same request, so their order on the listener has no effect.
+**A shared ALB is a shared risk.** Any namespace can join the forge-shared group, so anyone allowed to create an Ingress could add rules to the shared ALB, including rules for another service's hostname. A Kyverno policy restricts the group to Ingresses rendered by the Forge controller, and a second rejects any Ingress whose host is already used by another Ingress (§16.2). One host per service is also why Ingresses carry no group.order: rules from different services can never match the same request, so their order on the listener has no effect.
 
 **Zero-downtime rollouts.** Two settings close the gaps between Kubernetes and the ALB. A preStop sleep (15 s) keeps a terminating pod serving until the ALB has deregistered it; without it, rollouts produce occasional 502s. Readiness gates, injected by the Load Balancer Controller into pods in namespaces labelled elbv2.k8s.aws/pod-readiness-gate-inject, stop Kubernetes counting a new pod as Ready until the ALB reports its target healthy; without them, a rollout can briefly leave the ALB with no healthy targets. With both, a request loop across repeated rollouts sees no errors.
 
@@ -535,7 +542,7 @@ The ApplicationSet is the glue Revision 1 left unspecified. A git directory gene
 
 **Two repositories.** Platform components are Applications in charts/platform in this repository: Terraform creates one root Application pointing there, and each component appears as its own Application with its own sync status and history. Service desired state lives in a separate repository, forge-gitops (layout in §19), which keeps CI's frequent image-tag commits out of the platform repository. The ApplicationSet and its AppProject live in charts/platform, not in forge-gitops, because they decide what may be deployed: anyone who can merge to forge-gitops can add a service folder, but not change the generator or loosen the project.
 
-**As built.** A git directory generator watches services/*/dev and services/*/prod in forge-gitops and creates one Application per folder, named and namespaced &lt;service&gt;-&lt;environment&gt;, with CreateNamespace and the readiness-gate label on the namespace (§11). The AppProject allows forge-gitops as the only source, namespaces ending in -dev or -prod on this cluster as the only destinations, ForgeService as the only namespaced kind and Namespace as the only cluster-scoped one, so a raw Deployment committed to forge-gitops is refused. Argo CD polls Git, so changes appear within about three minutes.
+**As built.** A git directory generator watches services/*/dev and services/*/prod in forge-gitops and creates one Application per folder, named and namespaced &lt;service&gt;-&lt;environment&gt;, with CreateNamespace. Each namespace gets the readiness-gate label (§11), the forge.dev/tenant label that tenant policies select on, and the Pod Security restricted labels (§16.2). The AppProject allows forge-gitops as the only source, namespaces ending in -dev or -prod on this cluster as the only destinations, ForgeService as the only namespaced kind and Namespace as the only cluster-scoped one, so a raw Deployment committed to forge-gitops is refused. Argo CD polls Git, so changes appear within about three minutes.
 
 **Bootstrap details.** Terraform installs Argo CD with the argo-cd Helm chart and creates the root Application with the argocd-apps chart. Argo CD has no ingress and is reached by port-forward, so its UI is only as exposed as the Kubernetes API. Child Applications are ordered with sync waves (below), which requires restoring Argo CD's health check for Application resources. The root Application deliberately has no deletion finalizer: teardown pauses Argo CD before terraform destroy, and a finalizer nobody processes would hang the destroy.
 
@@ -545,8 +552,8 @@ The ApplicationSet is the glue Revision 1 left unspecified. A git directory gene
 |---|---|---|
 | -3 | karpenter | Only what Terraform created: IAM, Pod Identity, the interruption queue |
 | -2 | karpenter-configs (NodePool, EC2NodeClass) | Karpenter |
-| -1 | external-secrets, cert-manager | Capacity from Karpenter |
-| 0 | external-secrets-configs (ClusterSecretStore), kube-prometheus-crds, LB Controller, ExternalDNS | ESO's CRDs; cert-manager for the LB Controller's certificate |
+| -1 | external-secrets, cert-manager, kyverno | Capacity from Karpenter |
+| 0 | external-secrets-configs (ClusterSecretStore), kube-prometheus-crds, LB Controller, ExternalDNS, kyverno-policies | ESO's CRDs; cert-manager for the LB Controller's certificate; Kyverno's CRDs |
 | 1 | kube-prometheus-stack, forge-controller, the services AppProject | The ClusterSecretStore and the monitoring CRDs; the controller watches ServiceMonitors |
 | 2 | The services ApplicationSet (payments-dev, payments-prod) | The ForgeService CRD, the controller and the AppProject |
 
@@ -607,7 +614,7 @@ Fail the build only on HIGH and CRITICAL findings that have a fix available. Fai
 
 ## 16. Kubernetes Security and Policy
 
-Baseline controls are rendered by the controller, so they are not optional and cannot be forgotten. Kyverno then enforces at admission, which catches anything applied outside the controller.
+Baseline controls are rendered by the controller, so they are not optional and cannot be forgotten. Kyverno and Pod Security Admission then enforce at admission, which catches anything applied outside the controller and any controller bug.
 
 ### 16.1 Rendered by the controller
 
@@ -624,14 +631,32 @@ Baseline controls are rendered by the controller, so they are not optional and c
 
 ### 16.2 Enforced by Kyverno
 
-- verifyImages against the cosign keyless identity. This is the highest-value policy in the set and should be written first.
-- Registry allowlist restricted to the project ECR account.
-- Require resource requests, a memory limit, probes, and non-root — defense in depth behind the controller.
-- Disallow privileged, hostNetwork, hostPath, and privilege escalation.
-- Restrict the forge-shared IngressGroup to Ingresses rendered by the Forge controller (§11).
-- Reject an Ingress whose host is already claimed by another Ingress in the forge-shared group, so one service can never take over another's traffic (§11).
+Kyverno 1.19 runs as a platform Application at wave -1, and its policies sync from policies/kyverno in a second Application at wave 0. They are written as the CEL-based types, ValidatingPolicy and ImageValidatingPolicy, because ClusterPolicy is deprecated in 1.19 and removed in 1.20. All seven deny at admission.
 
-Run Kyverno in Audit mode first and read the policy reports before switching to Enforce. Turning on enforcement across a working cluster and watching every deployment fail is a memorable but avoidable afternoon.
+| Policy | Applies to | Rule |
+|---|---|---|
+| check-image-signature | Pods with images in the project ECR under forge/ | A cosign keyless signature from the build-image workflow on main, issued by GitHub's OIDC provider (§15) |
+| registry-allowlist | Pods in service namespaces | Every container image comes from the project ECR under forge/ |
+| check-pod-resources-and-probes | Pods in service namespaces | Liveness and readiness probes, CPU and memory requests, a memory limit |
+| check-pod-security-rules | Pods in service namespaces | A read-only root filesystem |
+| check-hostdomain | All Ingresses | Every host is a subdomain of the platform domain |
+| check-hostname-existence | All Ingresses | No other Ingress already uses the host, so one service can never take over another's traffic (§11) |
+| verify-ingress-group-restricted-to-forge-controller | Ingresses joining forge-shared | Only the Forge controller's ServiceAccount may create or change them (§11) |
+
+**Service namespaces** carry forge.dev/tenant: "true", set by the services ApplicationSet (§14). Pod policies select on that label rather than excluding platform namespaces one by one, so add-ons that legitimately use host networking or public images are never in scope. The Ingress policies apply cluster-wide, because an attempt to hijack the shared ALB could come from any namespace.
+
+**Pod Security Admission covers the rest.** The same namespaces are labelled to enforce the Kubernetes restricted profile, which rejects privileged containers, host namespaces and hostPath, privilege escalation, root users, added capabilities and a missing seccomp profile. That replaces four hand-written policies. Kyverno covers only what restricted does not: the read-only root filesystem, requests, limits and probes.
+
+**Signature checks need registry access.** Kyverno fetches signatures from ECR itself, so its admission and reports controllers have a Pod Identity role with ECR read access. The node role is not an option, because Karpenter's nodes block pods from instance metadata. Signatures are stored as OCI referrers, which Kyverno 1.19 reads.
+
+**Rolled out in Audit first.** Every policy ran in Audit until its reports were clean against the live workloads, and each was shown to reject its bad case before switching to Deny. Two lessons from that phase:
+
+- Audit never blocks, so a server-side dry run reports success and leaves no report. Policies were tested with the Kyverno CLI or switched to Deny briefly.
+- Background scans re-check existing resources without a request, so the group policy, which reads the requester, runs at admission only.
+
+Before switching, the reports must show no failures: the controller re-applies its children on every reconcile, so a resource that already failed a policy would start rejecting the controller's applies.
+
+**Failure mode.** The webhooks fail closed, so while Kyverno's admission controller is down, Ingress writes and Pod creation anywhere in the cluster are rejected: the signature policy's webhook sees every Pod, and filters by image only once Kyverno answers. It runs three replicas for that reason, and teardown removes its webhooks before its pods go away (§22).
 
 ## 17. Observability
 
@@ -795,7 +820,7 @@ forge/
 │   ├── internal/metrics/       # request metrics middleware
 │   └── Dockerfile
 ├── .github/workflows/          # build-and-test (PRs), build-image (reusable), deploy per image
-├── policies/kyverno/
+├── policies/kyverno/           # admission policies, synced by the kyverno-policies Application
 ├── observability/
 ├── docs/                       # architecture, service checklist, contract decisions
 └── README.md
@@ -843,7 +868,7 @@ Rates are for us-east-1, which has the same list prices as us-east-2 for every l
 
 > **The finding.** Under teardown discipline the budget is not tight — there is roughly 3x headroom over the realistic working pattern. Without teardown it is unreachable by a factor of 3.6, and the EKS control plane alone consumes 146% of it. This is why teardown automation is Phase 1 work with an exit criterion, not a cleanup task deferred to the end.
 
-Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD, deletes every ForgeService (otherwise the controller recreates the Ingresses deleted next), and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, waiting until Karpenter has terminated every node, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open (without the wait, a node still draining when the destroy began outlived Karpenter, held a subnet, and left the EKS cluster security group behind); a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups, the EKS cluster security group or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance or security group blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
+Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD, stops Kyverno and deletes its webhooks (a running Kyverno recreates them, and once its pods are gone they would reject every Pod creation in the cluster), deletes every ForgeService (otherwise the controller recreates the Ingresses deleted next), and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, waiting until Karpenter has terminated every node, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open (without the wait, a node still draining when the destroy began outlived Karpenter, held a subnet, and left the EKS cluster security group behind); a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups, the EKS cluster security group or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance or security group blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
 
 ## 23. Definition of Done
 
@@ -913,6 +938,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | GitOps repository credential | Resolved | A deploy key with write access on forge-gitops, stored as a secret in this repository (§15). A GitHub App would scale better across many repositories. |
 | terraform plan in CI | Deferred | Needs a separate read-only role with state access. Only the persistent root's plan is meaningful; the main root is usually torn down. |
 | Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Deferred until the controller runs in the cluster; until then it takes the values it needs as required flags (§9). |
+| Policy tests in CI | Deferred | The Kyverno CLI can run each policy against test manifests on every pull request that touches policies/kyverno. The duplicate-host and shared-group policies need cluster data or the requester's identity, so they stay covered by in-cluster checks. |
 | Monitoring CRDs | Resolved | The CRDs install from a separate prometheus-operator-crds Application at wave 0, version-matched to kube-prometheus-stack and protected from pruning (§14). |
 
 **Future extensions.** The ECS and other-language rows are candidates once the initial delivery is complete, because each proves the contract from a different side: the same Service runs on a second runtime, or the same pipeline builds a second language. Both are cheaper to keep possible than to retrofit, which is why the contract stays free of runtime and language details and the controller already mounts a writable /tmp.
