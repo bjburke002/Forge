@@ -93,6 +93,44 @@ resource "aws_iam_role_policy_attachment" "vpc_cni_AmazonEKS_CNI_Policy" {
   role       = aws_iam_role.vpc_cni.name
 }
 
+resource "aws_iam_role" "kyverno" {
+  name = "${var.cluster_name}-kyverno-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Effect = "Allow"
+        Principal = {
+          Service = "pods.eks.amazonaws.com"
+        }
+      },
+    ]
+  })
+
+}
+
+resource "aws_iam_role_policy_attachment" "kyverno_AmazonEC2ContainerRegistryReadOnly" {
+  role       = aws_iam_role.kyverno.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+resource "aws_eks_pod_identity_association" "kyverno_admission_controller" {
+  cluster_name    = var.cluster_name
+  namespace       = "kyverno"
+  service_account = "kyverno-admission-controller"
+  role_arn        = aws_iam_role.kyverno.arn
+}
+
+resource "aws_eks_pod_identity_association" "kyverno_reports_controller" {
+  cluster_name    = var.cluster_name
+  namespace       = "kyverno"
+  service_account = "kyverno-reports-controller"
+  role_arn        = aws_iam_role.kyverno.arn
+}
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.this.name
   addon_name   = "kube-proxy"
