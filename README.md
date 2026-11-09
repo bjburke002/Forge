@@ -4,9 +4,10 @@ An AWS-native internal developer platform on EKS. Teams describe a service in a 
 contract; the platform builds, deploys, exposes and observes it, with secure defaults
 baked in.
 
-> **Status:** Phases 0–5 complete. The Forge controller renders every resource a service
-> needs from a ForgeService, and services deploy through a separate GitOps repository
-> ([forge-gitops](https://github.com/bjburke002/forge-gitops)) with signed, scanned images.
+> **Status:** Phases 0–6 complete. The Forge controller renders every resource a service
+> needs from a ForgeService, services deploy through a separate GitOps repository
+> ([forge-gitops](https://github.com/bjburke002/forge-gitops)) with signed, scanned images,
+> and Kyverno rejects anything unsigned or out of policy at admission.
 
 ## What it does
 
@@ -16,6 +17,10 @@ baked in.
   from this repository and services from forge-gitops.
 - **Supply chain:** every image is scanned with Trivy before it is pushed, and signed
   keylessly with cosign alongside a signed SPDX SBOM.
+- **Admission policy:** Kyverno admits only images signed by this repository's build
+  workflow, keeps the shared ALB to controller-rendered Ingresses with unique hosts on the
+  platform domain, and requires probes, requests and a read-only root filesystem; Pod
+  Security Admission enforces the restricted profile on every service namespace.
 - **Shared ingress:** one ALB for all services, TLS from an ACM wildcard certificate,
   DNS managed by ExternalDNS.
 - **Spot-first capacity** via Karpenter, with hard limits as a cost guardrail.
@@ -48,6 +53,7 @@ See the [architecture document](docs/architecture.md) for the full design and th
 | `internal/controller/` | Reconciler, renderers and status |
 | `cmd/forge-controller/` | Controller entrypoint |
 | `config/` | Generated CRD and RBAC, the controller Deployment and its kustomization, and a sample ForgeService |
+| `policies/kyverno/` | Kyverno admission policies, synced by the `kyverno-policies` Application |
 | `docs/` | Architecture, service checklist, contract decisions |
 | `.github/workflows/` | Pull request checks, the shared image build, and a deploy workflow per image |
 
@@ -65,9 +71,9 @@ To run it yourself, replace these values:
 | Value | Where |
 |---|---|
 | AWS account ID and state bucket | `infra/terraform/backend.tf`, `infra/terraform/persistent/backend.tf` |
-| AWS account ID (ECR address) | `config/kustomization.yaml`, the overlays in forge-gitops |
-| Domain (`forgeappservices.com`) | `infra/terraform/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, ingress hosts in forge-gitops |
-| GitHub repository URLs | `charts/platform/*.yaml` (`repoURL`), `go.mod` |
+| AWS account ID (ECR address) | `config/kustomization.yaml`, the overlays in forge-gitops, `policies/kyverno/registryallowlist.yaml`, `policies/kyverno/signaturecheck.yaml` |
+| Domain (`forgeappservices.com`) | `infra/terraform/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, `policies/kyverno/hostdomain.yaml`, ingress hosts in forge-gitops |
+| GitHub repository URLs | `charts/platform/*.yaml` (`repoURL`), `go.mod`, the signing identity in `policies/kyverno/signaturecheck.yaml` |
 | Sample service image and host | `config/samples/payments/forgeservice.yaml` |
 | Public subnet CIDRs, monitoring namespace | Controller arguments in `config/manager/forge-controller-deployment.yaml` |
 | Terraform variables (admin role ARN, GitHub repository for CI) | copy each `terraform.tfvars.example` to `terraform.tfvars` and fill in |

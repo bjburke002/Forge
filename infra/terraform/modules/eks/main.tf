@@ -123,6 +123,12 @@ resource "aws_eks_pod_identity_association" "kyverno_admission_controller" {
   namespace       = "kyverno"
   service_account = "kyverno-admission-controller"
   role_arn        = aws_iam_role.kyverno.arn
+
+  depends_on = [
+    aws_eks_cluster.this,
+    aws_iam_role_policy_attachment.kyverno_AmazonEC2ContainerRegistryReadOnly,
+    aws_eks_addon.eks_pod_identity_agent
+  ]
 }
 
 resource "aws_eks_pod_identity_association" "kyverno_reports_controller" {

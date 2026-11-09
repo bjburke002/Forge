@@ -23,6 +23,16 @@ kc() { kubectl --context "$CTX" "$@"; }
 # Stop Argo CD re-creating what we delete (no-op until Argo is installed).
 kc -n argocd scale statefulset argocd-application-controller --replicas=0 2>/dev/null || true
 
+# Kyverno's webhooks fail closed, so once its pods are evicted they would reject Pod and
+# Ingress writes for the rest of teardown. Kyverno creates them at runtime (Argo never prunes
+# them) and recreates them while it runs: stop Kyverno first, then delete them.
+if kc get ns kyverno >/dev/null 2>&1; then
+  kc -n kyverno scale deploy --all --replicas=0
+  kc -n kyverno wait --for=delete pod -l app.kubernetes.io/component=admission-controller --timeout=2m
+  kc delete validatingwebhookconfigurations,mutatingwebhookconfigurations \
+    -l webhook.kyverno.io/managed-by=kyverno --ignore-not-found
+fi
+
 # Delete any fsvc to stop them from reconciling and recreating the ingresses
 if kc get crd forgeservices.forge.dev > /dev/null 2>&1; then
   kc delete forgeservices --all -A --timeout=10m
