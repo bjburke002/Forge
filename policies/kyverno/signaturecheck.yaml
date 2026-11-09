@@ -4,7 +4,7 @@ metadata:
   name: check-image-signature
 spec:
   validationActions:
-    - Audit
+    - Deny
   matchConstraints:
     resourceRules:
       - apiGroups: ['']

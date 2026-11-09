@@ -7,7 +7,7 @@ spec:
     background:
       enabled: false
   validationActions:
-    - Audit
+    - Deny
   matchConstraints:
     resourceRules:
       - apiGroups: ['networking.k8s.io']

@@ -4,7 +4,7 @@ metadata:
   name: check-pod-security-rules
 spec:
   validationActions:
-    - Audit
+    - Deny
   matchConstraints:
     namespaceSelector:
       matchLabels: 

@@ -4,7 +4,7 @@ metadata:
   name: registry-allowlist
 spec:
   validationActions:
-    - Audit
+    - Deny
   matchConstraints:
     namespaceSelector:
       matchLabels: 
