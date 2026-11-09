@@ -1,0 +1,33 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: check-pod-resources-and-probes
+spec:
+  validationActions:
+    - Audit
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: 
+        forge.dev/tenant: "true"
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: ['v1']
+        operations: ['CREATE', 'UPDATE']
+        resources: ['pods']
+  validations:
+    - message: "Workloads must have Liveness probe"
+      expression: |
+        object.spec.containers.all(c,has(c.livenessProbe))
+    - message: "Workloads must have Readiness probe"
+      expression: |
+        object.spec.containers.all(c, has(c.readinessProbe))
+    - message: "Workloads must include resource requests"
+      expression: |
+        object.spec.containers.all(c, has(c.resources) && 
+        has(c.resources.requests) &&
+        'cpu' in c.resources.requests && 'memory' in c.resources.requests)
+    - message: "Workloads must include a memory limit"
+      expression: |
+        object.spec.containers.all(c, has(c.resources) &&
+        has(c.resources.limits) &&
+        'memory' in c.resources.limits)

@@ -1,0 +1,21 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: verify-ingress-group-restricted-to-forge-controller
+spec:
+  validationActions:
+    - Audit
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['networking.k8s.io']
+        apiVersions: ['v1']
+        operations: ['CREATE', 'UPDATE']
+        resources: ['ingresses']
+  matchConditions:
+    - name: joins-forge-shared
+      expression: |
+        has(object.metadata.annotations) &&
+        object.metadata.annotations[?'alb.ingress.kubernetes.io/group.name'].orValue('') == 'forge-shared'
+  validations:
+    - message: "Only forge-controller may create Ingresses in the forge-shared ALB group"
+      expression: "request.userInfo.username == 'system:serviceaccount:forge-system:forge-controller'"    
