@@ -9,7 +9,7 @@ resources:
 images:
 - name: forge-controller
   newName: 241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/forge-controller
-  newTag: e51ce9e61ad12252de3ef84606ba7445ef287185
+  newTag: 3c16c62c0df9a521c20690691821da5f1a5289b3
 
 # Make sure the CRDs can't get blown away
 patches:
