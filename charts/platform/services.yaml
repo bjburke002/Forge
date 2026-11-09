@@ -38,6 +38,7 @@ spec:
             forge.dev/tenant: "true"
             pod-security.kubernetes.io/warn: restricted
             pod-security.kubernetes.io/audit: restricted
+            pod-security.kubernetes.io/enforce: restricted
         automated:
           prune: true
           selfHeal: true
