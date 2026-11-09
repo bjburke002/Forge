@@ -1,0 +1,23 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: check-pod-security-rules
+spec:
+  validationActions:
+    - Audit
+  matchConstraints:
+    namespaceSelector:
+      matchLabels: 
+        forge.dev/tenant: "true"
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: ['v1']
+        operations: ['CREATE', 'UPDATE']
+        resources: ['pods']
+  validations:
+    - message: "PodSecurityContext must have Read-Only Root Filesystem"
+      expression: |
+        object.spec.containers.all(c,
+          has(c.securityContext) &&
+          has(c.securityContext.readOnlyRootFilesystem) &&
+          c.securityContext.readOnlyRootFilesystem == true)

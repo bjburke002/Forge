@@ -1,0 +1,17 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: check-hostdomain
+spec:
+  validationActions:
+    - Audit
+  matchConstraints:
+    resourceRules:
+      - apiGroups:   ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations:  ["CREATE", "UPDATE"]
+        resources:   ["ingresses"]
+  validations:
+    - message: "Hostnames must be on the forgeappservices.com root domain"
+      expression:  |
+        !has(object.spec.rules) || object.spec.rules.all(r, has(r.host) && r.host.endsWith('.forgeappservices.com'))

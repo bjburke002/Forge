@@ -1,0 +1,27 @@
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: check-image-signature
+spec:
+  validationActions:
+    - Audit
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ['']
+        apiVersions: ['v1']
+        operations: ['CREATE', 'UPDATE']
+        resources: ['pods']
+  attestors:
+    - name: cosign
+      cosign:
+        keyless:
+          identities:
+            - subject: 'https://github.com/bjburke002/Forge/.github/workflows/build-image.yaml@refs/heads/main'
+              issuer: 'https://token.actions.githubusercontent.com'
+  matchImageReferences:
+    - glob: '241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/*'
+  credentials:
+    providers: [amazon]
+  validations:
+    - expression: "images.containers.map(image, verifyImageSignatures(image, [attestors.cosign])).all(e, e> 0)"
+      message: "Images must be signed by the build-image workflow"

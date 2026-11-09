@@ -1,0 +1,26 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: check-hostname-existence
+spec:
+  validationActions:
+    - Audit
+  matchConstraints:
+    resourceRules:
+      - apiGroups:    ["networking.k8s.io"]
+        apiVersions:  ["v1"]
+        operations:   ["CREATE", "UPDATE"]
+        resources:    ["ingresses"]
+  variables:
+    - name: "ingresses"
+      expression: |
+        resource.List('networking.k8s.io/v1', 'ingresses', '').items
+  validations:
+    - message: "Hostname is already in use."
+      expression: |
+            !has(object.spec.rules) || !variables.ingresses.exists(i,
+            !(i.metadata.namespace == object.metadata.namespace && i.metadata.name == object.metadata.name) &&
+            has(i.spec.rules) &&
+            i.spec.rules.exists(ir, has(ir.host) &&
+            object.spec.rules.exists(r, has(r.host) && r.host == ir.host)))  
+
