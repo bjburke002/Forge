@@ -136,6 +136,12 @@ resource "aws_eks_pod_identity_association" "kyverno_reports_controller" {
   namespace       = "kyverno"
   service_account = "kyverno-reports-controller"
   role_arn        = aws_iam_role.kyverno.arn
+
+  depends_on = [
+    aws_eks_cluster.this,
+    aws_iam_role_policy_attachment.kyverno_AmazonEC2ContainerRegistryReadOnly,
+    aws_eks_addon.eks_pod_identity_agent
+  ]
 }
 resource "aws_eks_addon" "kube_proxy" {
   cluster_name = aws_eks_cluster.this.name
