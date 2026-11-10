@@ -51,11 +51,22 @@ spec:
         alertmanager:
           enabled: false
         prometheus:
+          serviceAccount:
+            create: true
+            name: prometheus-sa
           prometheusSpec:
             ruleSelectorNilUsesHelmValues: false
             serviceMonitorSelectorNilUsesHelmValues: false
             podMonitorSelectorNilUsesHelmValues: false
             retention: "24h"
+            remoteWrite:
+              - url: "https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-46b92863-4ba3-4e9b-8228-92e07c36f144/api/v1/remote_write"
+                sigv4:
+                  region: us-east-1
+                writeRelabelConfigs:
+                  - sourceLabels: [__name__]
+                    regex: "forge:.*"
+                    action: keep
             resources:
               requests:
                 memory: 512Mi
@@ -65,12 +76,30 @@ spec:
         grafana:
           admin:
             existingSecret: grafana-admin  
+          grafana.ini:
+            auth:
+              sigv4_auth_enabled: true
+            aws:
+              allowed_auth_providers: default
+          serviceAccount:
+            create: true
+            name: grafana-sa
           resources:
             requests:
               memory: 128Mi
               cpu: 100m
             limits:
-              memory: 512Mi    
+              memory: 512Mi
+          additionalDataSources:
+            - name: AMP
+              type: prometheus
+              access: proxy
+              url: "https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-46b92863-4ba3-4e9b-8228-92e07c36f144"
+              jsonData:
+                httpMethod: POST
+                sigV4Auth: true
+                sigV4AuthType: default
+                sigV4Region: us-east-1
   destination:
     server: https://kubernetes.default.svc
     namespace: kube-prometheus    

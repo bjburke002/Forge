@@ -148,6 +148,124 @@ resource "aws_eks_pod_identity_association" "yace" {
     aws_eks_addon.eks_pod_identity_agent
   ]
 }
+
+# AWS Managed Workspace info
+data "aws_prometheus_workspaces" "amp" {
+  alias_prefix = "forge-amp"
+}
+
+resource "aws_iam_role" "prometheus" {
+  name = "${var.cluster_name}-prometheus-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Effect = "Allow"
+        Principal = {
+          Service = "pods.eks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "prometheus" {
+  name        = "${var.cluster_name}-prometheus-policy"
+  path        = "/"
+  description = "Pod identity policy for Prometheus AMP"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "aps:RemoteWrite",
+        ]
+        Resource = one(data.aws_prometheus_workspaces.amp.arns) # data could potentially pass more than one arn here so making sure
+      }
+    ]
+  })
+}
+
+resource "aws_eks_pod_identity_association" "prometheus" {
+  cluster_name    = var.cluster_name
+  namespace       = "kube-prometheus"
+  service_account = "prometheus-sa"
+  role_arn        = aws_iam_role.prometheus.arn
+
+  depends_on = [
+    aws_eks_cluster.this,
+    aws_iam_role_policy_attachment.prometheus,
+    aws_eks_addon.eks_pod_identity_agent
+  ]
+}
+resource "aws_iam_role_policy_attachment" "prometheus" {
+  role       = aws_iam_role.prometheus.name
+  policy_arn = aws_iam_policy.prometheus.arn
+}
+
+# Policy info and Pod Identity association for Grafana
+resource "aws_iam_role" "grafana" {
+  name = "${var.cluster_name}-grafana-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Effect = "Allow"
+        Principal = {
+          Service = "pods.eks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "grafana" {
+  name        = "${var.cluster_name}-grafana-policy"
+  path        = "/"
+  description = "Pod Identity Policy for Grafana"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "aps:QueryMetrics",
+          "aps:GetSeries",
+          "aps:GetLabels",
+          "aps:GetMetricMetadata"
+        ]
+        Resource = one(data.aws_prometheus_workspaces.amp.arns)
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "grafana" {
+  role       = aws_iam_role.grafana.name
+  policy_arn = aws_iam_policy.grafana.arn
+}
+
+resource "aws_eks_pod_identity_association" "grafana" {
+  cluster_name    = var.cluster_name
+  namespace       = "kube-prometheus"
+  service_account = "grafana-sa"
+  role_arn        = aws_iam_role.grafana.arn
+
+  depends_on = [
+    aws_eks_cluster.this,
+    aws_iam_role_policy_attachment.grafana,
+    aws_eks_addon.eks_pod_identity_agent
+  ]
+}
 resource "aws_iam_role" "kyverno" {
   name = "${var.cluster_name}-kyverno-role"
   assume_role_policy = jsonencode({

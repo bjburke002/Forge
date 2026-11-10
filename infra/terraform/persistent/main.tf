@@ -53,3 +53,9 @@ resource "aws_secretsmanager_secret_version" "grafana_admin" {
 
   secret_string_wo_version = 1
 }
+
+module "amp" {
+  source = "../modules/amp"
+
+  amp_alias = "forge-amp"
+}
