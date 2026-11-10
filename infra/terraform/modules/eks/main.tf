@@ -92,7 +92,62 @@ resource "aws_iam_role_policy_attachment" "vpc_cni_AmazonEKS_CNI_Policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
   role       = aws_iam_role.vpc_cni.name
 }
+resource "aws_iam_role" "yace" {
+  name = "${var.cluster_name}-yace-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+          "sts:TagSession"
+        ]
+        Effect = "Allow"
+        Principal = {
+          Service = "pods.eks.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
 
+resource "aws_iam_policy" "yace" {
+  name        = "${var.cluster_name}-yace-policy"
+  path        = "/"
+  description = "Yet Another CloudWatch Exporter (YACE) Policy for ALB metrics"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "tag:GetResources",
+          "cloudwatch:GetMetricData",
+          "cloudwatch:ListMetrics"
+        ],
+        Effect   = "Allow"
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "yace" {
+  role       = aws_iam_role.yace.name
+  policy_arn = aws_iam_policy.yace.arn
+}
+
+resource "aws_eks_pod_identity_association" "yace" {
+  cluster_name    = var.cluster_name
+  namespace       = "kube-prometheus"
+  service_account = "yace-sa"
+  role_arn        = aws_iam_role.yace.arn
+
+  depends_on = [
+    aws_eks_cluster.this,
+    aws_iam_role_policy_attachment.yace,
+    aws_eks_addon.eks_pod_identity_agent
+  ]
+}
 resource "aws_iam_role" "kyverno" {
   name = "${var.cluster_name}-kyverno-role"
   assume_role_policy = jsonencode({
