@@ -35,11 +35,11 @@ spec:
           sts-region: us-east-1
           discovery:
             exportedTagsOnMetrics:
-              alb:
+              AWS/ApplicationELB:
                 - ingress.k8s.aws/resource
                 - ingress.k8s.aws/stack
             jobs:
-              - type: alb
+              - type: AWS/ApplicationELB
                 regions: 
                   - us-east-1
                 dimensionNameRequirements:
