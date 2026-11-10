@@ -19,6 +19,8 @@ spec:
       expression: |
         has(object.metadata.annotations) &&
         object.metadata.annotations[?'alb.ingress.kubernetes.io/group.name'].orValue('') == 'forge-shared'
+    - name: not-being-deleted
+      expression: "!has(object.metadata.deletionTimestamp)"
   validations:
     - message: "Only forge-controller and ALB may create Ingresses in the forge-shared ALB group"
       expression: | 
