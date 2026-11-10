@@ -20,5 +20,9 @@ spec:
         has(object.metadata.annotations) &&
         object.metadata.annotations[?'alb.ingress.kubernetes.io/group.name'].orValue('') == 'forge-shared'
   validations:
-    - message: "Only forge-controller may create Ingresses in the forge-shared ALB group"
-      expression: "request.userInfo.username == 'system:serviceaccount:forge-system:forge-controller'"    
+    - message: "Only forge-controller and ALB may create Ingresses in the forge-shared ALB group"
+      expression: | 
+        request.userInfo.username in[
+        'system:serviceaccount:forge-system:forge-controller',
+        'system:serviceaccount:kube-system:aws-load-balancer-controller'
+        ]
