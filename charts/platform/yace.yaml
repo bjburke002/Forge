@@ -1,0 +1,77 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: yace
+  namespace: argocd
+  labels:
+    name: yace
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-prometheus
+
+  source:
+    repoURL: oci://ghcr.io/prometheus-community/charts/prometheus-yet-another-cloudwatch-exporter
+    targetRevision: "0.50.0"
+    path: .
+    helm:
+      valuesObject:
+        serviceAccount:
+          create: true
+          name: "yace-sa"
+        serviceMonitor:
+          enabled: true
+          interval: 60s
+        extraArgs:
+          scraping-interval: 60
+        config: |-
+          apiVersion: v1alpha1
+          sts-region: us-east-1
+          discovery:
+            exportedTagsOnMetrics:
+              alb:
+                - ingress.k8s.aws/resource
+                - ingress.k8s.aws/stack
+            jobs:
+              - type: alb
+                regions: 
+                  - us-east-1
+                dimensionNameRequirements:
+                  - LoadBalancer
+                  - TargetGroup
+                searchTags:
+                  - key: ingress.k8s.aws/stack
+                    value: forge-shared
+                delay: 120
+                metrics:
+                  - name: RequestCount
+                    statistics:
+                      - Sum
+                    period: 60
+                    length: 180
+                    nilToZero: true
+                  - name: HTTPCode_Target_5XX_Count
+                    statistics:
+                      - Sum
+                    period: 60
+                    length: 180
+                    nilToZero: true
+                  - name: HealthyHostCount
+                    statistics:
+                      - Minimum
+                    period: 60
+                    length: 180
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+    syncOptions:
+      - CreateNamespace=true
