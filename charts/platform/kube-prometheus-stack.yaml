@@ -76,11 +76,12 @@ spec:
         grafana:
           admin:
             existingSecret: grafana-admin  
+          plugins:
+            - grafana-amazonprometheus-datasource
           grafana.ini:
-            auth:
-              sigv4_auth_enabled: true
             aws:
               allowed_auth_providers: default
+              forward_settings_to_plugins: grafana-amazonprometheus-datasource
           serviceAccount:
             create: true
             name: grafana-sa
@@ -92,7 +93,7 @@ spec:
               memory: 512Mi
           additionalDataSources:
             - name: AMP
-              type: prometheus
+              type: grafana-amazonprometheus-datasource
               access: proxy
               url: "https://aps-workspaces.us-east-1.amazonaws.com/workspaces/ws-46b92863-4ba3-4e9b-8228-92e07c36f144"
               jsonData:
