@@ -1,0 +1,26 @@
+groups:
+  - name: forge-slo
+    interval: 1m
+    rules:
+      - record: forge:uptime:minutes30d
+        expr: count_over_time(forge:requests:rate5m[30d])
+      - record: forge:error_budget_consumed:minutes30d
+        expr: sum_over_time((forge:errors:rate5m / (forge:requests:rate5m > 0))[30d:1m])
+      - record: forge:burn_rate:1h
+        expr:  |
+          (
+            sum_over_time((forge:errors:rate5m / (forge:requests:rate5m > 0))[1h:1m])
+            or
+            count_over_time(forge:requests:rate5m[1h]) * 0
+          )
+          /
+          (count_over_time(forge:requests:rate5m[1h]) * 0.001)
+      - record: forge:burn_rate:6h
+        expr: |
+          (
+            sum_over_time((forge:errors:rate5m / (forge:requests:rate5m > 0))[6h:1m])
+            or
+            count_over_time(forge:requests:rate5m[6h]) * 0
+          )
+          /
+          (count_over_time(forge:requests:rate5m[6h]) * 0.001)
