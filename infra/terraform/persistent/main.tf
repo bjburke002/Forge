@@ -58,4 +58,5 @@ module "amp" {
   source = "../modules/amp"
 
   amp_alias = "forge-amp"
+  slo_rules = file("${path.root}/../../../observability/amp-rules/slo.yaml")
 }
