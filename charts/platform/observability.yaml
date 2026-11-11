@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  labels:
+    name: observability
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/bjburke002/Forge.git
+    targetRevision: main
+    path: observability/recording-rules/
+  
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-prometheus
+  
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+    retry:
+      limit: 5

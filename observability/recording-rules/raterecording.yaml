@@ -1,0 +1,39 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: forge-sli
+  namespace: kube-prometheus
+spec:
+  groups:
+    - name: forge-sli
+      interval: 1m
+      rules:
+        - record: forge:requests:rate5m
+          expr:  |
+            sum by (namespace, service) (
+              label_replace(
+                label_replace(
+                  sum_over_time(aws_applicationelb_request_count_sum[5m]),
+                  "namespace", "$1", "tag_ingress_k8s_aws_resource", "([^/]+)/.*"
+                ),
+                "service", "$1", "tag_ingress_k8s_aws_resource", "[^/]+/(.+)-ingress-.*"
+              )
+            ) / 300
+        - record: forge:errors:rate5m
+          expr: |
+            (
+              sum by (namespace, service) (
+                label_replace(
+                  label_replace(
+                    sum_over_time(aws_applicationelb_httpcode_target_5_xx_count_sum[5m]),
+                    "namespace", "$1", "tag_ingress_k8s_aws_resource", "([^/]+)/.*"
+                  ),
+                  "service", "$1", "tag_ingress_k8s_aws_resource", "[^/]+/(.+)-ingress-.*"
+                )
+              ) / 300
+            )
+            or 
+            forge:requests:rate5m *0
+        - record: forge:sli_availability:ratio_rate5m
+          expr: 1 - (forge:errors:rate5m / forge:requests:rate5m)
+
