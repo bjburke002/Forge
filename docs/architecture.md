@@ -2,7 +2,7 @@
 
 *Architecture, Design Decisions, and Build Strategy*
 
-Revision 2.6  ·  November 2026  
+Revision 2.7  ·  November 2026  
 Supersedes Revision 1 (Forge — AWS Developer Platform Architecture)  
 Delivery window: 13 weeks  ·  Cost ceiling: \$50/month
 
@@ -119,6 +119,14 @@ Revision 2.6 (November 2026) records Phase 6, admission policy:
 - Karpenter only launches Nitro instances, which prefix delegation requires (§10.3).
 - Teardown stops Kyverno and deletes its webhooks first, so they cannot block the rest of teardown (§22).
 
+Revision 2.7 (November 2026) records Phase 7, observability and SLOs:
+
+- ALB metrics reach Prometheus through YACE, a CloudWatch exporter that labels each target group with the service it belongs to (§17).
+- The SLI series are written to Amazon Managed Service for Prometheus, so the 30-day error budget survives teardown; the budget and burn rates are computed there (§17, §18).
+- The SLI stays request-based, but the budget and burn rates are time-based, because a request-based budget is unreadable under sparse, bursty traffic (§18.2).
+- One Grafana dashboard, provisioned from Git, covers every service through namespace and service selectors (§17).
+- Burn-rate alerting is designed but deferred (§18.3, §24).
+
 ## 3. Non-Goals
 
 Stating what Forge is not is the cheapest defense against scope creep. Forge does not attempt:
@@ -167,7 +175,7 @@ The useful consequence is that "stands up from nothing and tears down cleanly" b
 | Workload identity | EKS Pod Identity | Short-lived least-privilege credentials. No static keys in pods. |
 | Registry | Amazon ECR | Repositories created on first push from a template: immutable tags, scanning, lifecycle rules. |
 | Policy | Kyverno | Admission enforcement including cosign signature verification. |
-| Observability | Prometheus + Grafana | OpenTelemetry tracing deferred — see §24. |
+| Observability | Prometheus + Grafana, Amazon Managed Service for Prometheus | In-cluster Prometheus for everything short-lived; AMP keeps the SLI series and computes the 30-day budget. YACE brings ALB metrics in from CloudWatch. OpenTelemetry tracing deferred — see §24. |
 | CI | GitHub Actions + OIDC | No long-lived AWS credentials anywhere. |
 | Supply chain | Trivy + Syft + cosign | Scan, SBOM, keyless signing bound to the workflow identity. |
 | Accounts and sign-in | AWS Organizations + IAM Identity Center | Dedicated Forge account with SCP guardrails. Short-lived SSO credentials; no IAM users or access keys. |
@@ -662,35 +670,41 @@ Before switching, the reports must show no failures: the controller re-applies i
 ## 17. Observability
 
 ```text
-Application  --> /metrics (Prometheus client library)
-     |
-     v
-ServiceMonitor  (rendered by the controller for every service)
-     |
-     v
-Prometheus  <-- ALB target-group metrics via CloudWatch exporter
-     |              (RequestCount, HTTPCode_Target_5XX, TargetResponseTime)
-     +--> recording rules: SLI, error budget, burn rate
-     +--> alerting rules: multi-window multi-burn-rate
-     |
-     v
-Grafana  --> per-service dashboard, generated from a template
+Application --> /metrics ---------------------------+
+                                                     |
+ALB --> CloudWatch --> YACE (tag-aware exporter) ----+--> Prometheus (in cluster, 24h)
+                                                     |      |
+ServiceMonitor (rendered by the controller) ---------+      +--> recording rules: forge:requests, forge:errors, SLI
+                                                            |
+                                                            | remote write, forge:* only
+                                                            v
+                                         Amazon Managed Service for Prometheus (survives teardown)
+                                                            +--> rules: 30-day budget, burn rates
+                                                            |
+                                                            v
+                                Grafana --> one dashboard, per-service selectors
 ```
 
 Every Forge service receives, with no configuration beyond observability.metricsPort:
 
-- Request rate, error rate, and latency percentiles at the load balancer.
+- Request rate and error rate at the load balancer; latency percentiles and status codes from the service's own metrics.
 - CPU and memory against requests and limits.
-- Replica availability and pod restart counts.
-- HPA scaling activity and current position between min and max.
+- Replica count against the HPA's range, and pod restarts.
+- Healthy targets at the ALB.
 - Availability, error budget remaining, and burn rate.
-- A Grafana dashboard, provisioned from a template with the service name substituted.
+- A Grafana dashboard: one shared dashboard with namespace and service selectors, so a new service appears as soon as it has traffic.
 
 > **Scope decision.** OpenTelemetry tracing is deferred. Metrics and SLOs fit the budget; a trace backend does not, and half-instrumented tracing is worse than none. §24 records the omission and what adding tracing would take.
 
-**As configured.** Prometheus selects ServiceMonitors from every namespace and release, so a service needs no special labels to be scraped. The monitoring CRDs install from a separate Application and the chart's admission webhooks are disabled (see §14). Data is kept for 24 hours on an emptyDir since it would not survive teardown anyway, and Alertmanager is off until alerting arrives with the SLOs. Grafana is reached by port-forward, runs with a 512Mi memory limit, and its admin password comes from Secrets Manager through ESO.
+**As configured.** Prometheus selects ServiceMonitors from every namespace and release, so a service needs no special labels to be scraped. The monitoring CRDs install from a separate Application and the chart's admission webhooks are disabled (see §14). Data is kept for 24 hours on an emptyDir since it would not survive teardown anyway; what must outlive the cluster goes to AMP (below). Alertmanager is off, because burn-rate alerting is deferred (§18.3). Grafana is reached by port-forward, runs with a 512Mi memory limit, and its admin password comes from Secrets Manager through ESO.
 
 **The request metrics contract.** Every service exposes http_requests_total and http_request_duration_seconds, labelled by method, matched route pattern and status code, on its metrics port. Labelling by route pattern rather than raw path keeps the number of series bounded when scanners hit random URLs through the ALB, and health-check paths are excluded so frequent probes do not dilute the success rate. The sample service's ERROR_RATE setting injects 500s, and an injected 10% measured as 11% in Prometheus, which validates the path from request to SLI end to end.
+
+**ALB metrics.** YACE (yet-another-cloudwatch-exporter) fetches RequestCount, HTTPCode_Target_5XX_Count and HealthyHostCount for every target group tagged as part of forge-shared, once a minute, two minutes behind real time because CloudWatch publishes late. It is preferred over the Java cloudwatch_exporter because it discovers resources by tag and copies tags onto the metrics: the Load Balancer Controller's ingress.k8s.aws/resource tag names the namespace and service, and that is the only label that survives a rebuild, since target groups get new names and ARNs on every make up. Two details matter for the rules built on it. Each sample is a per-minute total, not a counter, so rates are sum_over_time over the window divided by its length rather than rate(). And a CloudWatch metric does not exist until its first data point, so a new target group has no 5xx series until its first 500, and the error rules fall back to zero. YACE runs with a Pod Identity role limited to three read actions.
+
+**History that survives teardown.** In-cluster Prometheus loses everything at make down, which makes a 30-day budget impossible. The per-service request and error series (the forge: recording rules) are therefore remote-written to an Amazon Managed Service for Prometheus workspace, created in the persistent Terraform root; a keep filter sends nothing else. AMP evaluates the 30-day budget and the burn rates itself, from rules uploaded by Terraform (observability/amp-rules), so they keep their history across rebuilds; after a rebuild the 30-day figures still include the previous sessions. Prometheus writes and Grafana reads through their own Pod Identity roles, signed with SigV4. Grafana 13 only signs AMP requests through the Amazon Managed Service for Prometheus data source plugin, not the core Prometheus data source. Rule-evaluation errors and unusually heavy queries are logged to CloudWatch Logs.
+
+**The dashboard.** observability/dashboards holds one dashboard, provisioned as a ConfigMap that Grafana's sidecar loads, so it needs no clicks after a rebuild. Its rows are the SLO numbers from AMP, traffic, health and (collapsed) resources. The healthy-targets panel exists because of a known gap in the SLI (§18.1). Being provisioned, it is edited in Git, not in the UI.
 
 ## 18. SLOs and Error Budgets
 
@@ -702,25 +716,18 @@ Revision 1 proposed Kubernetes readiness as the availability SLI and explicitly 
 
 ### 18.1 The SLI
 
-Availability is the proportion of requests served successfully, measured at the load balancer — the closest point to the user that the platform controls.
+Availability is the proportion of requests served successfully, measured at the load balancer — the closest point to the user that the platform controls. The recording rules run in the cluster, per namespace and service:
 
 ```text
-# recording rule
-forge:sli_availability:ratio_rate5m =
-    sum(rate(aws_applicationelb_request_count_sum{service="$svc"}[5m]))
-  - sum(rate(aws_applicationelb_httpcode_target_5xx_sum{service="$svc"}[5m]))
-  /
-    sum(rate(aws_applicationelb_request_count_sum{service="$svc"}[5m]))
-
-# 30-day rolling error budget, 99.9% target
-forge:error_budget_remaining:ratio =
-  1 - (
-    (1 - avg_over_time(forge:sli_availability:ratio_rate5m[30d]))
-    / 0.001
-  )
+forge:requests:rate5m  = sum by (namespace, service) (sum_over_time(<ALB RequestCount>[5m])) / 300
+forge:errors:rate5m    = sum by (namespace, service) (sum_over_time(<ALB target 5xx>[5m])) / 300
+                         or forge:requests:rate5m * 0
+forge:sli_availability:ratio_rate5m = 1 - forge:errors:rate5m / forge:requests:rate5m
 ```
 
-4xx responses are excluded from the error count. A client sending a malformed request is not a platform failure, and counting it as one makes the SLO measure the wrong system.
+The namespace and service labels come from the target group's tags (§17). 4xx responses are excluded from the error count. A client sending a malformed request is not a platform failure, and counting it as one makes the SLO measure the wrong system.
+
+**Known gap.** When a service has no healthy targets, the ALB answers with 503 itself. Those are counted in HTTPCode_ELB_5XX_Count, which is reported per load balancer, not per target group, so on a shared ALB they cannot be attributed to a service and the SLI does not see them. A single-replica rollout produced about 120 such 503s in testing. The dashboard shows healthy targets next to the SLI so the gap is visible; counting minutes with no healthy targets as bad is the candidate fix (§24).
 
 ### 18.2 The error budget
 
@@ -728,11 +735,31 @@ forge:error_budget_remaining:ratio =
 30 days x 24 hours x 60 minutes x 0.1%  =  43.2 minutes per 30-day window
 ```
 
-Forge exposes consumed budget, remaining budget, current availability, and burn rate through both the Grafana dashboard and forge slo. Readiness and replica availability remain on the dashboard as secondary diagnostic signals — useful for explaining why the SLI moved, not for defining it.
+**The budget is time-based.** Each minute with traffic consumes its error fraction: a minute at 100% errors uses one minute, a minute at 10% uses 0.1. Minutes without traffic count as good, and minutes when the cluster is torn down do not count at all, so the budget measures availability while the platform is up. The rules run in AMP:
+
+```text
+forge:error_budget_consumed:minutes30d = sum_over_time((forge:errors:rate5m / (forge:requests:rate5m > 0))[30d:1m])
+forge:uptime:minutes30d                = count_over_time(forge:requests:rate5m[30d])
+
+budget remaining   = 43.2 - consumed
+30-day availability = 1 - consumed / uptime
+```
+
+**Why not a request-based budget.** The usual form, 1 minus the 30-day error ratio divided by 0.001, is correct but is not a countdown: its allowance is 0.1% of the requests in the window, which grows with traffic. Under steady production traffic the two agree, and the request-based form weights a peak-hour outage more heavily than one at 3am, which is why many platforms prefer it. Forge's traffic is bursty test load in sessions of a few hours, and there the request-based budget was unreadable: a few minutes at a 10% error rate showed −11,408%, or −3.4 days, because the window contained little else. The time-based budget starts at 43.2 minutes and only goes down when errors happen, which is what "remaining" should mean.
+
+The target is 99.9% for every service. The contract's slo field is not read yet; taking each service's target from it would need the controller to publish it as a metric (§24).
+
+Forge exposes consumed budget, remaining budget, current availability, and burn rate through the Grafana dashboard, and later forge slo. Readiness and replica availability remain on the dashboard as secondary diagnostic signals — useful for explaining why the SLI moved, not for defining it.
 
 ### 18.3 Burn-rate alerting
 
-Alert on multi-window multi-burn-rate conditions rather than on threshold breaches, which is the standard approach and avoids both alert fatigue and slow detection:
+A burn rate is how fast the budget is being spent compared with the pace that would use it up in exactly 30 days. Forge computes it the same time-based way as the budget, over 1 hour and 6 hours, and shows both on the dashboard:
+
+```text
+forge:burn_rate:1h = consumed minutes in the last hour / (0.001 x up-minutes in the last hour)
+```
+
+The intended alerting is multi-window multi-burn-rate, the standard approach, which avoids both alert fatigue and slow detection:
 
 | Severity | Burn rate | Windows | Budget consumed before firing | Meaning |
 |---|---|---|---|---|
@@ -742,6 +769,8 @@ Alert on multi-window multi-burn-rate conditions rather than on threshold breach
 | Ticket | 1x | 6h and 3d | 10% | Trending toward exhaustion at month end. |
 
 The short window is the confirmation window: both must be burning before the alert fires, which suppresses single-spike noise while still catching a genuine fast burn within minutes.
+
+**Status: designed, not built.** The alerts are deferred (§24). Building them means burn-rate rules for the remaining windows, alert rules limited to prod namespaces, and AMP's alert manager with an SNS topic. Detection would take three to four minutes even for a fast burn: CloudWatch's delay, YACE's offset and a one-minute evaluation.
 
 ## 19. Environment Model
 
@@ -810,7 +839,7 @@ forge/
 │   ├── scripts/                # k8s-teardown.sh, check-leftovers.sh
 │   ├── persistent/             # what survives teardown
 │   └── modules/                # vpc eks iam karpenter argocd
-│                               #   + ecr github-oidc acm (persistent)
+│                               #   + ecr github-oidc acm amp (persistent)
 ├── charts/
 │   ├── platform/               # app of apps: one Application per component
 │   ├── karpenter-config/       # NodePool + EC2NodeClass
@@ -823,6 +852,9 @@ forge/
 ├── .github/workflows/          # build-and-test (PRs), build-image (reusable), deploy per image
 ├── policies/kyverno/           # admission policies, synced by the kyverno-policies Application
 ├── observability/
+│   ├── recording-rules/        # PrometheusRule: per-service request, error and SLI series
+│   ├── dashboards/             # the shared dashboard, provisioned through Grafana's sidecar
+│   └── amp-rules/              # budget and burn-rate rules, uploaded to AMP by Terraform
 ├── docs/                       # architecture, service checklist, contract decisions
 └── README.md
 ```
@@ -842,8 +874,9 @@ Rates are for us-east-1, which has the same list prices as us-east-2 for every l
 | Shared ALB x1 | \$0.0225 / hr | \$0.0225 |
 | System node group, 2x t3a.small on-demand | \$0.0188 / hr each | \$0.0376 |
 | Karpenter spot capacity, ~2x t3a.medium | ~\$0.0125 / hr each | \$0.0250 |
+| CloudWatch GetMetricData for YACE, ~360 metrics/hr | \$0.01 / 1,000 metrics | \$0.0036 |
 | EBS gp3, ~60 GB attached | \$0.08 / GB-mo | \$0.0066 |
-| TOTAL |   | \$0.2367 / hr |
+| TOTAL |   | \$0.2403 / hr |
 
 ### 22.2 Residue that survives teardown
 
@@ -854,22 +887,23 @@ Rates are for us-east-1, which has the same list prices as us-east-2 for every l
 | Secrets Manager, 3 secrets | \$1.20 |
 | S3 (Terraform state) and retained CloudWatch logs | \$1.00 |
 | NAT data processing and egress, ~20 GB | \$2.00 |
+| Amazon Managed Service for Prometheus, SLI series only | \$0.00 (within the free tier) |
 | TOTAL | \$5.10 |
 
 ### 22.3 Monthly total by uptime discipline
 
 | Cluster uptime | Compute | Residue | Monthly total | Against \$50 |
 |---|---|---|---|---|
-| 40 hr/mo (~9 hr/week) | \$9.47 | \$5.10 | \$14.57 | Comfortable |
-| 60 hr/mo (~14 hr/week) | \$14.20 | \$5.10 | \$19.30 | Comfortable — the planning assumption |
-| 100 hr/mo (~23 hr/week) | \$23.67 | \$5.10 | \$28.77 | Fine |
-| 150 hr/mo (~35 hr/week) | \$35.51 | \$5.10 | \$40.61 | Approaching the ceiling |
-| 190 hr/mo (~44 hr/week) | \$44.97 | \$5.10 | \$50.07 | At the ceiling |
-| 730 hr/mo (never torn down) | \$172.79 | \$5.10 | \$177.89 | Over by 3.6x |
+| 40 hr/mo (~9 hr/week) | \$9.61 | \$5.10 | \$14.71 | Comfortable |
+| 60 hr/mo (~14 hr/week) | \$14.42 | \$5.10 | \$19.52 | Comfortable — the planning assumption |
+| 100 hr/mo (~23 hr/week) | \$24.03 | \$5.10 | \$29.13 | Fine |
+| 150 hr/mo (~35 hr/week) | \$36.05 | \$5.10 | \$41.15 | Approaching the ceiling |
+| 190 hr/mo (~44 hr/week) | \$45.66 | \$5.10 | \$50.76 | At the ceiling |
+| 730 hr/mo (never torn down) | \$175.42 | \$5.10 | \$180.52 | Over by 3.6x |
 
 > **The finding.** Under teardown discipline the budget is not tight — there is roughly 3x headroom over the realistic working pattern. Without teardown it is unreachable by a factor of 3.6, and the EKS control plane alone consumes 146% of it. This is why teardown automation is Phase 1 work with an exit criterion, not a cleanup task deferred to the end.
 
-Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD, stops Kyverno and deletes its webhooks (a running Kyverno recreates them, and once its pods are gone they would reject every Pod creation in the cluster), deletes every ForgeService (otherwise the controller recreates the Ingresses deleted next), and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, waiting until Karpenter has terminated every node, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open (without the wait, a node still draining when the destroy began outlived Karpenter, held a subnet, and left the EKS cluster security group behind); a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups, the EKS cluster security group or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance or security group blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
+Practical controls: make up and make down in infra/terraform; a pre-destroy script that pauses Argo CD, stops Kyverno and deletes its webhooks (a running Kyverno recreates them, and once its pods are gone they would reject every Pod creation in the cluster), deletes every ForgeService (otherwise the controller recreates the Ingresses deleted next), and deletes Ingresses, LoadBalancer Services, PersistentVolumeClaims, PodDisruptionBudgets and then Karpenter NodePools, waiting until Karpenter has terminated every node, so their controllers remove the AWS resources behind them before terraform destroy and no budget can hold a node drain open (without the wait, a node still draining when the destroy began outlived Karpenter, held a subnet, and left the EKS cluster security group behind); a post-destroy check that fails if EBS volumes, Karpenter instances, Load Balancer Controller security groups, the EKS cluster security group or load balancers were left behind, since volumes do not block the destroy and keep billing, and a leftover instance or security group blocks VPC deletion (the check also runs on its own, which is the first step when a destroy hangs); an ECR lifecycle policy capping untagged images; CloudWatch log retention set to 7 days; a remote-write filter that sends only the forge: series to AMP, which keeps it within the free tier; Karpenter NodePool cpu and memory limits; and an AWS Budgets alert at \$35 wired to email. The budget alert is five minutes of work and is the thing that catches the mistake this model does not anticipate. Teardown also waits for ExternalDNS to remove its records before terraform destroy.
 
 ## 23. Definition of Done
 
@@ -938,8 +972,11 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | AWS access for services | Decided | Not part of the contract. A service that calls AWS gets an IAM role and Pod Identity association from Terraform, bound to its ServiceAccount (<svc>-sa in its namespace). The controller stays limited to Kubernetes objects (§7), and every AWS permission goes through a reviewed Terraform change. ACK remains an option if self-service AWS access is ever wanted. Built when the first service needs AWS access; the design is in §9. |
 | GitOps repository credential | Resolved | A deploy key with write access on forge-gitops, stored as a secret in this repository (§15). A GitHub App would scale better across many repositories. |
 | terraform plan in CI | Deferred | Needs a separate read-only role with state access. Only the persistent root's plan is meaningful; the main root is usually torn down. |
-| Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Deferred until the controller runs in the cluster; until then it takes the values it needs as required flags (§9). |
+| Account-specific values | Decided | Installation values (account ID, region, cluster name, domain, registry, subnet CIDRs, the AMP endpoint) come only from Terraform, passed as values on the root Application it already creates, so the §7 boundary is unchanged. charts/platform becomes a Helm chart that templates the platform Applications and the controller's ConfigMap, which the CLI also reads. Per-service values stay in the contract. Deferred until the controller runs in the cluster; until then it takes the values it needs as required flags (§9). |
 | Policy tests in CI | Deferred | The Kyverno CLI can run each policy against test manifests on every pull request that touches policies/kyverno. The duplicate-host and shared-group policies need cluster data or the requester's identity, so they stay covered by in-cluster checks. |
+| Burn-rate alerts and owner routing | Deferred | Designed in §18.3; the dashboard shows the 1h and 6h burn rates. Building it needs burn-rate rules for the remaining windows, alert rules for prod namespaces, AMP's alert manager and an SNS topic with an email subscription; routing on spec.owner would follow. Until then, the "alert firing" step in §23 and the failure test that injects 500s check the budget burn on the dashboard instead. |
+| Per-service SLO targets | Deferred | Every service uses 99.9%. Reading the contract's slo field needs the controller to publish each target as a metric for the AMP rules to use; dev overlays set slo to null and would then show no SLO. |
+| ALB-generated 503s in the SLI | Open | 503s the ALB returns when a service has no healthy targets are counted per load balancer, not per target group, so the SLI misses them (§18.1). Candidate fix: count minutes with no healthy targets as fully bad in the time-based budget. |
 | Monitoring CRDs | Resolved | The CRDs install from a separate prometheus-operator-crds Application at wave 0, version-matched to kube-prometheus-stack and protected from pruning (§14). |
 
 **Future extensions.** The ECS and other-language rows are candidates once the initial delivery is complete, because each proves the contract from a different side: the same Service runs on a second runtime, or the same pipeline builds a second language. Both are cheaper to keep possible than to retrofit, which is why the contract stays free of runtime and language details and the controller already mounts a writable /tmp.
@@ -962,7 +999,7 @@ The control plane is not built first. The golden path is proven by hand, then th
 4. Define the contract as Go types. Generate the CRD. Build the controller. This is the centerpiece and it gets the largest single block of time.
 5. CI/CD with the full supply chain: scan, SBOM, keyless signing, GitOps write-back.
 6. Kyverno to Enforce, with image verification bound to the signing identity from step 5.
-7. Observability and the SLO implementation: recording rules, error budget, burn-rate alerts, generated dashboards.
+7. Observability and the SLO implementation: recording rules, error budget, burn rates and a provisioned dashboard; burn-rate alerts are designed but deferred (§18.3).
 8. The CLI, deliberately last and deliberately thin. By this point it is a convenience layer over things that already work.
 9. Failure testing and operational runbooks.
 
