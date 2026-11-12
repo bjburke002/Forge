@@ -4,10 +4,11 @@ An AWS-native internal developer platform on EKS. Teams describe a service in a 
 contract; the platform builds, deploys, exposes and observes it, with secure defaults
 baked in.
 
-> **Status:** Phases 0–6 complete. The Forge controller renders every resource a service
+> **Status:** Phases 0–7 complete. The Forge controller renders every resource a service
 > needs from a ForgeService, services deploy through a separate GitOps repository
 > ([forge-gitops](https://github.com/bjburke002/forge-gitops)) with signed, scanned images,
-> and Kyverno rejects anything unsigned or out of policy at admission.
+> Kyverno rejects anything unsigned or out of policy at admission, and every service gets
+> an availability SLO with a 30-day error budget that survives teardown.
 
 ## What it does
 
@@ -21,6 +22,9 @@ baked in.
   workflow, keeps the shared ALB to controller-rendered Ingresses with unique hosts on the
   platform domain, and requires probes, requests and a read-only root filesystem; Pod
   Security Admission enforces the restricted profile on every service namespace.
+- **SLOs:** availability measured at the load balancer, a 30-day error budget and burn
+  rates kept in Amazon Managed Service for Prometheus so they survive teardown, and one
+  provisioned Grafana dashboard for every service.
 - **Shared ingress:** one ALB for all services, TLS from an ACM wildcard certificate,
   DNS managed by ExternalDNS.
 - **Spot-first capacity** via Karpenter, with hard limits as a cost guardrail.
@@ -45,7 +49,7 @@ See the [architecture document](docs/architecture.md) for the full design and th
 | Path | Contents |
 |---|---|
 | `infra/terraform/` | Main root: VPC, EKS, IAM, Karpenter, Argo CD bootstrap |
-| `infra/terraform/persistent/` | Resources that survive teardown (ECR template, CI role, certificate, secrets) |
+| `infra/terraform/persistent/` | Resources that survive teardown (ECR template, CI role, certificate, secrets, the AMP workspace and its rules) |
 | `infra/terraform/modules/` | One module per foundation layer |
 | `charts/platform/` | Argo CD Applications for platform components, the controller, and the services ApplicationSet and AppProject |
 | `examples/payments-api/` | Sample Go service used to prove the golden path |
@@ -54,6 +58,7 @@ See the [architecture document](docs/architecture.md) for the full design and th
 | `cmd/forge-controller/` | Controller entrypoint |
 | `config/` | Generated CRD and RBAC, the controller Deployment and its kustomization, and a sample ForgeService |
 | `policies/kyverno/` | Kyverno admission policies, synced by the `kyverno-policies` Application |
+| `observability/` | SLI recording rules and the Grafana dashboard (synced by the `observability` Application), and the AMP budget rules (uploaded by Terraform) |
 | `docs/` | Architecture, service checklist, contract decisions |
 | `.github/workflows/` | Pull request checks, the shared image build, and a deploy workflow per image |
 
@@ -75,6 +80,7 @@ To run it yourself, replace these values:
 | Domain (`forgeappservices.com`) | `infra/terraform/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, `policies/kyverno/hostdomain.yaml`, ingress hosts in forge-gitops |
 | GitHub repository URLs | `charts/platform/*.yaml` (`repoURL`), `go.mod`, the signing identity in `policies/kyverno/signaturecheck.yaml` |
 | Sample service image and host | `config/samples/payments/forgeservice.yaml` |
+| AMP workspace endpoint (created by the persistent root; `terraform output forge_amp_endpoint`) | `charts/platform/kube-prometheus-stack.yaml` (remote write URL and Grafana data source) |
 | Public subnet CIDRs, monitoring namespace | Controller arguments in `config/manager/forge-controller-deployment.yaml` |
 | Terraform variables (admin role ARN, GitHub repository for CI) | copy each `terraform.tfvars.example` to `terraform.tfvars` and fill in |
 | GitHub Actions secrets | `ROLE_ARN`, `DEPLOY_KEY` (write access to this repository), `GITOPS_DEPLOY_KEY` (write access to forge-gitops) |
@@ -91,6 +97,10 @@ Apply the persistent root once:
 
     cd infra/terraform/persistent
     terraform init && terraform apply
+
+It must exist before `make up`: the main root looks up its Amazon Managed Service for
+Prometheus workspace, and the plan fails if it is missing. Re-apply it after changing
+`observability/amp-rules/`, which it uploads to AMP.
 
 Then build and tear down the platform as needed:
 
