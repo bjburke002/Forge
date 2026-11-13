@@ -38,6 +38,7 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.configPath, "config", "", "path to the Forge config file")
 	cmd.PersistentFlags().StringVar(&opts.kubeContext, "context", "", "kube context to use")
 	cmd.AddCommand(newConfigCmd(opts))
+	cmd.AddCommand(newValidateCmd(opts))
 
 	return cmd
 }
