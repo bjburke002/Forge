@@ -28,7 +28,7 @@ func newValidateCmd(opts *rootOptions) *cobra.Command {
 
 			errs, err := validator.Validate(cmd.Context(), cr)
 			if err != nil {
-				return fmt.Errorf("%s: %w\n", path, err)
+				return fmt.Errorf("%s: %w", path, err)
 			}
 			if len(errs) > 0 {
 				for _, e := range errs {
