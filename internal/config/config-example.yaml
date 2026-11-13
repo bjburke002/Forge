@@ -1,0 +1,9 @@
+gitopsRepo: bjburke002/forge          # owner/name of GitHub repo for the GitOps repository - overridden by FORGE_GITOPS_REPO
+gitopsBranch: main                    # Whatever branch ArgoCD is watching for your apps - overridden by FORGE_GITOPS_BRANCH
+domain: forgeappservices.com          # Ingress domain - overridden by FORGE_DOMAIN
+argoNamespace: argocd                 # Namespace of ArgoCD Applications - overridden by FORGE_ARGO_NAMESPACE
+kubeContext: ""                       # empty = current-context - overridden by FORGE_KUBE_CONTEXT
+ampEndpoint: https://aps-workspaces.us-east-1.amazonaws.com/workspaces/<workspace> # overridden by FORGE_AMP_ENDPOINT
+awsRegion: us-east-1                  # Overridden by FORGE_AWS_REGION
+grafanaURL: http://localhost:3000     # Whatever your kubernetes port-forward is for Grafana, or an external URL if you have one (not recommended)
+                                      # overridden by FORGE_GRAFANA_URL
