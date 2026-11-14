@@ -39,6 +39,6 @@ func newRootCmd() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.kubeContext, "context", "", "kube context to use")
 	cmd.AddCommand(newConfigCmd(opts))
 	cmd.AddCommand(newValidateCmd(opts))
-
+	cmd.AddCommand(newCreateCmd(opts))
 	return cmd
 }
