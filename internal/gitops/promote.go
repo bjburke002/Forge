@@ -46,11 +46,11 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 	}
 
 	images, found, err := unstructured.NestedSlice(prodK, "images")
-	if !found {
-		return "", nil, errors.New("prod overlay has no images entry")
-	}
 	if err != nil {
 		return "", nil, fmt.Errorf("reading prod overlay image tag: %w", err)
+	}
+	if !found {
+		return "", nil, errors.New("prod overlay has no images entry")
 	}
 
 	matched := false

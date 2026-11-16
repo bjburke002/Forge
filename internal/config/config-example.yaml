@@ -1,4 +1,4 @@
-gitopsRepo: bjburke002/forge          # owner/name of GitHub repo for the GitOps repository - overridden by FORGE_GITOPS_REPO
+gitopsRepo: bjburke002/forge-gitops          # owner/name of GitHub repo for the GitOps repository - overridden by FORGE_GITOPS_REPO
 gitopsBranch: main                    # Whatever branch ArgoCD is watching for your apps - overridden by FORGE_GITOPS_BRANCH
 domain: forgeappservices.com          # Ingress domain - overridden by FORGE_DOMAIN
 argoNamespace: argocd                 # Namespace of ArgoCD Applications - overridden by FORGE_ARGO_NAMESPACE
