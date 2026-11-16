@@ -44,11 +44,11 @@ func newPromoteCmd(opts *rootOptions) *cobra.Command {
 
 			devPath := path.Join("services", name, "dev", "kustomization.yaml")
 			d, found, err := c.ReadFile(cmd.Context(), devPath)
-			if !found {
-				return fmt.Errorf("dev overlay not found at %q", devPath)
-			}
 			if err != nil {
 				return fmt.Errorf("reading dev overlay: %w", err)
+			}
+			if !found {
+				return fmt.Errorf("dev overlay not found at %q", devPath)
 			}
 
 			prodPath := path.Join("services", name, "prod", "kustomization.yaml")

@@ -18,7 +18,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:          "forge",
-		Short:        "Register, inspect and promot Forge services",
+		Short:        "Register, inspect and promote Forge services",
 		SilenceUsage: true,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(opts.configPath)

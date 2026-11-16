@@ -100,6 +100,7 @@ func RenderDeployment(fs *v1alpha1.ForgeService) *appsv1ac.DeploymentApplyConfig
 			corev1ac.TopologySpreadConstraint().
 				WithMaxSkew(1).
 				WithTopologyKey("topology.kubernetes.io/zone").
+				WithNodeTaintsPolicy(corev1.NodeInclusionPolicyHonor).
 				WithWhenUnsatisfiable(corev1.DoNotSchedule).
 				WithLabelSelector(metav1ac.LabelSelector().
 					WithMatchLabels(selectorLabels(fs))).

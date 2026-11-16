@@ -11,7 +11,7 @@ import (
 
 func newValidateCmd(opts *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "validate",
+		Use:   "validate <file>",
 		Short: "Validate Forge Service CR",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
