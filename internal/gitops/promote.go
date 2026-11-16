@@ -49,6 +49,9 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 	if !found {
 		return "", nil, errors.New("prod overlay has no images entry")
 	}
+	if err != nil {
+		return "", nil, fmt.Errorf("reading prod overlay image tag: %w", err)
+	}
 
 	matched := false
 	for _, i := range images {
