@@ -81,7 +81,7 @@ func RenderDeployment(fs *v1alpha1.ForgeService) *appsv1ac.DeploymentApplyConfig
 	// Setting up the pod spec. Uses the container spec above
 	// Breaking them up mostly to keep this readable
 	podSpec := corev1ac.PodSpec().
-		WithServiceAccountName(fs.Name + "-sa").
+		WithServiceAccountName(fs.Name+"-sa").
 		WithSecurityContext(corev1ac.PodSecurityContext().
 			WithRunAsNonRoot(true).
 			WithRunAsUser(65532).
@@ -94,6 +94,13 @@ func RenderDeployment(fs *v1alpha1.ForgeService) *appsv1ac.DeploymentApplyConfig
 				WithMaxSkew(1).
 				WithTopologyKey("kubernetes.io/hostname").
 				WithWhenUnsatisfiable(corev1.ScheduleAnyway).
+				WithLabelSelector(metav1ac.LabelSelector().
+					WithMatchLabels(selectorLabels(fs))).
+				WithMatchLabelKeys("pod-template-hash"),
+			corev1ac.TopologySpreadConstraint().
+				WithMaxSkew(1).
+				WithTopologyKey("topology.kubernetes.io/zone").
+				WithWhenUnsatisfiable(corev1.DoNotSchedule).
 				WithLabelSelector(metav1ac.LabelSelector().
 					WithMatchLabels(selectorLabels(fs))).
 				WithMatchLabelKeys("pod-template-hash"),
