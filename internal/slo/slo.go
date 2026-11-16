@@ -30,6 +30,7 @@ const (
 	burnRate6hQuery = `forge:burn_rate:6h{namespace="%[1]s", service="%[2]s"}`
 )
 
+// Get queries Prometheus managed rule groups through AMP and returns formatted results
 func Get(ctx context.Context, prom promv1.API, name string) ([]Result, error) {
 	results := make([]Result, 0, len(environments))
 
