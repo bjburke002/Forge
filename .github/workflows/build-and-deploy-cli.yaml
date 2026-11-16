@@ -1,0 +1,55 @@
+name: 'Build and Deploy Forge CLI'
+
+on:
+  push: 
+    tags: ['v*']
+
+permissions: 
+  contents: write
+
+jobs:
+  release-cli:
+    name: "Build and release CLI"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache-dependency-path: "go.sum"
+
+      - name: Verify go dependencies
+        run: go mod verify
+      
+      - name: Run Go Vet
+        run: go vet ./...
+      
+      - name: Run Go Test
+        run: go test ./...
+      
+      - name: Build forge CLI binaries
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          mkdir -p dist
+          for target in darwin/arm64 darwin/amd64 linux/amd64; do
+            GOOS="${target%/*}"
+            GOARCH="${target#*/}"
+            GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
+              -o "dist/forge_${GOOS}_${GOARCH}" ./cmd/forge
+          done
+          cd dist && sha256sum forge_* > checksum.txt
+        
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{github.token}}
+          TAG: ${{github.ref_name}}
+        run: |
+          gh release create "$TAG" dist/* \
+            --title "$TAG" \
+            --generate-notes \
+            --verify-tag
+      
