@@ -73,7 +73,7 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 		entry["newTag"] = ref.tag
 	}
 	if !matched {
-		return "", nil, fmt.Errorf("prod overlay has no iamge named %q", ref.placeholder)
+		return "", nil, fmt.Errorf("prod overlay has no image named %q", ref.placeholder)
 	}
 	if err := unstructured.SetNestedSlice(prodK, images, "images"); err != nil {
 		return "", nil, fmt.Errorf("writing dev tag to prod kustomization: %w", err)
