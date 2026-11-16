@@ -170,3 +170,35 @@ func (c *GitHubClient) BranchExists(ctx context.Context, branch string) (bool, e
 	}
 	return false, fmt.Errorf("verifying branch %q exists: %w", branchPath, err)
 }
+
+func (c *GitHubClient) ReadFile(ctx context.Context, filePath string) ([]byte, bool, error) {
+	opts := &github.RepositoryContentGetOptions{
+		Ref: c.baseBranch,
+	}
+
+	f, _, resp, err := c.client.Repositories.GetContents(
+		ctx,
+		c.owner,
+		c.repoName,
+		filePath,
+		opts,
+	)
+
+	if resp != nil && resp.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("accessing path %q: %w", filePath, err)
+	}
+
+	if f == nil {
+		return nil, false, fmt.Errorf("%s is a directory, not a file", filePath)
+	}
+
+	content, err := f.GetContent()
+	if err != nil {
+		return nil, false, fmt.Errorf("reading contents of %s: %w", filePath, err)
+	}
+
+	return []byte(content), true, nil
+}

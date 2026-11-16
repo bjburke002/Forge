@@ -75,13 +75,7 @@ func Files(data []byte, domain string) (name string, files map[string][]byte, er
 	files[path.Join("services", name, "base", "kustomization.yaml")] = baseKustomization
 	files[path.Join("services", name, "base", "kustomizeconfig.yaml")] = []byte(kustomizeConfig)
 
-	devK := kustomization{
-		APIVersion: kustomizeAPIVersion,
-		Kind:       kustomizeKind,
-		Namespace:  name + "-dev",
-		Resources:  []string{"../base"},
-		Images:     []kustomizeImage{{Name: ref.placeholder, NewName: ref.name, NewTag: ref.tag}},
-	}
+	devK := overlay(name, "dev", ref)
 
 	// If an ingress exists, we patch that in so that dev and prod can't use the same hostname
 	_, found, err = unstructured.NestedMap(manifest, "spec", "ingress")
@@ -162,4 +156,15 @@ func decodeCR(data []byte) (map[string]any, error) {
 		return nil, errors.New("manifest is empty")
 	}
 	return obj, nil
+}
+
+func overlay(name, env string, imageRef imageRef) kustomization {
+	k := kustomization{
+		APIVersion: kustomizeAPIVersion,
+		Kind:       kustomizeKind,
+		Namespace:  name + "-" + env,
+		Resources:  []string{"../base"},
+		Images:     []kustomizeImage{{Name: imageRef.placeholder, NewName: imageRef.name, NewTag: imageRef.tag}},
+	}
+	return k
 }
