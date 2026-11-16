@@ -32,13 +32,16 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist
-          for target in darwin/arm64 darwin/amd64 linux/amd64; do
-            GOOS="${target%/*}"
-            GOARCH="${target#*/}"
+          for target in darwin/arm64 darwin/amd64 linux/amd64 windows/amd64; do
+            IFS=/ read -r GOOS GOARCH <<< "$target"
+            ext=""
+            if [[ "$GOOS" == "windows" ]]; then
+              ext=".exe"
+            fi
             GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
-              -o "dist/forge_${GOOS}_${GOARCH}" ./cmd/forge
+              -o "dist/forge_${GOOS}_${GOARCH}${ext}" ./cmd/forge
           done
-          cd dist && sha256sum forge_* > checksum.txt
+          cd dist && sha256sum forge_* > checksums.txt
         
       - name: Create GitHub Release
         env:
