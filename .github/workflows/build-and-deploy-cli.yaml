@@ -30,6 +30,7 @@ jobs:
       - name: Build forge CLI binaries
         env:
           CGO_ENABLED: "0"
+          TAG: ${{github.ref_name}}
         run: |
           mkdir -p dist
           for target in darwin/arm64 darwin/amd64 linux/amd64 windows/amd64; do
@@ -39,7 +40,7 @@ jobs:
               ext=".exe"
             fi
             GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
-              -o "dist/forge_${GOOS}_${GOARCH}${ext}" ./cmd/forge
+              -ldflags "-s -w -X main.version=$TAG" -o "dist/forge_${GOOS}_${GOARCH}${ext}" ./cmd/forge
           done
           cd dist && sha256sum forge_* > checksums.txt
         
