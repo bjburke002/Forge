@@ -57,3 +57,45 @@ configs:
         end
       end
       return hs
+    resource.customizations.health.forge.dev_ForgeService: |
+      hs = {}
+      if obj.status == nil then
+        hs.status = "Progressing"
+        hs.message = "Waiting for the controller"
+        return hs
+      end
+
+      local generation = obj.metadata.generation or 0
+      local observed = obj.status.observedGeneration or 0
+      if observed < generation then
+        hs.status = "Progressing"
+        hs.message = "Waiting on the controller to reconcile the latest spec"
+        return hs
+      end
+
+      local ready = nil
+      local degraded = nil
+      if obj.status.conditions ~= nil then
+        for _, condition in iparis(obj.status.conditions) do
+          if condition.Type == "Ready" then
+            ready = condition
+          elseif condition.Type == "Degraded" then
+            degraded = condition
+          end
+        end
+      end
+
+      if degraded ~= nil and degraded.status == "True" then
+        hs.status = "Degraded"
+        hs.message = degraded.message
+        return hs
+      end
+      if ready ~= nil and condition.status == "True" then
+        hs.status = "Healthy"
+        hs.message = ready.message
+        return hs
+      end
+
+      h.status = "Progressing"
+      h.message = (ready ~= nil and ready.message) or "Waiting for the Ready condition"
+      return hs
