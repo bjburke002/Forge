@@ -13,6 +13,8 @@ type rootOptions struct {
 	cfg         config.Config
 }
 
+var version = "dev"
+
 func newRootCmd() *cobra.Command {
 	opts := &rootOptions{}
 
@@ -20,6 +22,7 @@ func newRootCmd() *cobra.Command {
 		Use:          "forge",
 		Short:        "Register, inspect and promote Forge services",
 		SilenceUsage: true,
+		Version:      version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(opts.configPath)
 			if err != nil {
