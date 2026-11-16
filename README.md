@@ -4,12 +4,6 @@ An AWS-native internal developer platform on EKS. Teams describe a service in a 
 contract; the platform builds, deploys, exposes and observes it, with secure defaults
 baked in.
 
-> **Status:** Phases 0–7 complete. The Forge controller renders every resource a service
-> needs from a ForgeService, services deploy through a separate GitOps repository
-> ([forge-gitops](https://github.com/bjburke002/forge-gitops)) with signed, scanned images,
-> Kyverno rejects anything unsigned or out of policy at admission, and every service gets
-> an availability SLO with a 30-day error budget that survives teardown.
-
 ## What it does
 
 - **Ephemeral by design:** the platform is torn down nightly and rebuilt from code to
@@ -27,7 +21,11 @@ baked in.
   provisioned Grafana dashboard for every service.
 - **Shared ingress:** one ALB for all services, TLS from an ACM wildcard certificate,
   DNS managed by ExternalDNS.
-- **Spot-first capacity** via Karpenter, with hard limits as a cost guardrail.
+- **A thin CLI:** `forge` validates a ForgeService offline against the CRD, opens the
+  pull requests that register and promote a service, and reports Argo CD and SLO state.
+  It never writes to the cluster.
+- **Spot-first capacity** via Karpenter, with hard limits as a cost guardrail, and
+  replicas spread across nodes and availability zones.
 - **No long-lived credentials:** Identity Center for people, GitHub OIDC for CI,
   EKS Pod Identity for workloads, External Secrets for application secrets.
 
@@ -40,6 +38,7 @@ baked in.
                        └──> services (forge-gitops) ──> Forge controller ──> Deployment, Ingress, ...
                                     ▲
     GitHub Actions ──> scan, SBOM, sign ──> ECR ──> image tag commit to forge-gitops
+    forge create / promote ──────────────────────> pull request on forge-gitops
 
 See the [architecture document](docs/architecture.md) for the full design and the
 [contract decisions](docs/service-contract-decisions.md) for how the service contract was settled.
@@ -56,11 +55,13 @@ See the [architecture document](docs/architecture.md) for the full design and th
 | `pkg/contract/v1alpha1/` | The ForgeService contract; the CRD is generated from it |
 | `internal/controller/` | Reconciler, renderers and status |
 | `cmd/forge-controller/` | Controller entrypoint |
-| `config/` | Generated CRD and RBAC, the controller Deployment and its kustomization, and a sample ForgeService |
+| `cmd/forge/` | The `forge` CLI's commands |
+| `internal/config/`, `internal/validate/`, `internal/gitops/`, `internal/status/`, `internal/slo/` | CLI logic: configuration, CRD validation, GitOps pull requests, cluster status, SLO queries |
+| `config/` | Generated CRD (also embedded in the CLI) and RBAC, the controller Deployment and its kustomization, and a sample ForgeService |
 | `policies/kyverno/` | Kyverno admission policies, synced by the `kyverno-policies` Application |
 | `observability/` | SLI recording rules and the Grafana dashboard (synced by the `observability` Application), and the AMP budget rules (uploaded by Terraform) |
 | `docs/` | Architecture, service checklist, contract decisions |
-| `.github/workflows/` | Pull request checks, the shared image build, and a deploy workflow per image |
+| `.github/workflows/` | Pull request checks, the shared image build, a deploy workflow per image, and the CLI release |
 
 ## Prerequisites
 
@@ -84,6 +85,7 @@ To run it yourself, replace these values:
 | Public subnet CIDRs, monitoring namespace | Controller arguments in `config/manager/forge-controller-deployment.yaml` |
 | Terraform variables (admin role ARN, GitHub repository for CI) | copy each `terraform.tfvars.example` to `terraform.tfvars` and fill in |
 | GitHub Actions secrets | `ROLE_ARN`, `DEPLOY_KEY` (write access to this repository), `GITOPS_DEPLOY_KEY` (write access to forge-gitops) |
+| CLI configuration (GitOps repository, domain, AMP endpoint, region) | Your own `config.yaml`; start from `internal/config/config-example.yaml` |
 
 The region is `us-east-1` throughout; changing it means updating the same files.
 
@@ -113,8 +115,58 @@ Then build and tear down the platform as needed:
 Argo CD installs the controller, its CRD and RBAC with the rest of the platform. A
 service is a folder in forge-gitops (`services/<name>/{base,dev,prod}`); the
 ApplicationSet creates an Application per environment, named and namespaced
-`<name>-dev` and `<name>-prod`. CI writes new image tags to the dev overlay; promoting
-to prod is a pull request copying the tag to the prod overlay.
+`<name>-dev` and `<name>-prod`.
+
+1. **Build first.** The service's own repository calls this repository's reusable
+   workflow (`bjburke002/Forge/.github/workflows/build-image.yaml@main`), which scans,
+   signs and pushes the image to ECR. Kyverno only admits images signed by that
+   workflow. A new repository must be added to the CI role's trust policy, and needs a
+   write credential for its dev overlay in forge-gitops.
+2. **Register.** Write a ForgeService with the pushed image in `spec.image`, check it
+   with `forge validate`, then run `forge create` to open a pull request adding its
+   `base` and `dev` folders. Merging it brings up `<name>-dev`.
+3. **Ship.** From then on, CI writes each new image tag to the dev overlay.
+4. **Promote.** `forge promote <name>` opens a pull request copying dev's image to the
+   prod overlay, creating it the first time. Merging it deploys `<name>-prod`. To roll
+   back, revert that pull request in GitHub.
+
+## The forge CLI
+
+Download a binary for macOS, Linux or Windows from the repository's
+[Releases](https://github.com/bjburke002/Forge/releases), with `checksums.txt` to
+verify it, or build it yourself:
+
+    go install ./cmd/forge
+
+| Command | Does | Needs |
+|---|---|---|
+| `forge validate <file>` | Checks a ForgeService against the CRD's schema and CEL rules | Nothing: offline |
+| `forge create <file>` | Validates it and opens a pull request adding `services/<name>/base` and `dev` | GitHub token |
+| `forge promote <name>` | Opens a pull request copying dev's image to the prod overlay | GitHub token |
+| `forge status <name>` | Argo CD sync and health, readiness, replicas, image and URL for dev and prod | Cluster access |
+| `forge slo <name>` | 30-day availability, budget left and 1h and 6h burn rates from AMP | AWS credentials |
+| `forge config view` | Prints the resolved configuration | Nothing |
+
+`create` and `promote` take `--dry-run` to print the files instead of opening a pull
+request. Every command takes `--config <path>` and `--context <kube context>`.
+
+**Configuration.** The CLI reads `~/.config/forge/config.yaml` if it exists, otherwise
+`config.yaml` in a `forge` folder under the operating system's configuration directory,
+or the file given with `--config`. Copy `internal/config/config-example.yaml` and fill
+in the GitOps repository (`owner/name`), its branch, the platform domain, the Argo CD
+namespace, and the AMP endpoint and region. Each setting can also be set with an
+environment variable (`FORGE_GITOPS_REPO`, `FORGE_DOMAIN`, `FORGE_AMP_ENDPOINT` and so
+on); flags win over environment variables, which win over the file.
+
+**GitHub token.** `create` and `promote` use `FORGE_GITHUB_TOKEN`, then `GITHUB_TOKEN`,
+then `gh auth token` if the GitHub CLI is signed in. A fine-grained token limited to
+forge-gitops with read and write access to contents and pull requests is enough. The
+token is never stored in the configuration file.
+
+**Releases.** Pushing a `v*` tag builds the binaries and publishes a release:
+
+    git tag -a v0.1.0 -m "forge CLI v0.1.0"
+    git push origin v0.1.0
 
 ## Running the controller locally
 
