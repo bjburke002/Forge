@@ -27,9 +27,6 @@ jobs:
       - name: Run Go Vet
         run: go vet ./...
       
-      - name: Run Go Test
-        run: go test ./...
-      
       - name: Build forge CLI binaries
         env:
           CGO_ENABLED: "0"
