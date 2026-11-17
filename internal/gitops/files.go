@@ -58,7 +58,7 @@ func Files(data []byte, domain string) (name string, files map[string][]byte, er
 	}
 
 	files = make(map[string][]byte)
-	files[ServicePath("eks", name, "base", "forgeservice.yaml")] = baseCR
+	files[ServicePath(TargetEKS, name, "base", "forgeservice.yaml")] = baseCR
 
 	baseK := kustomization{
 		APIVersion:     kustomizeAPIVersion,
@@ -71,8 +71,8 @@ func Files(data []byte, domain string) (name string, files map[string][]byte, er
 	if err != nil {
 		return "", nil, fmt.Errorf("marshaling base kustomization: %w", err)
 	}
-	files[ServicePath("eks", name, "base", "kustomization.yaml")] = baseKustomization
-	files[ServicePath("eks", name, "base", "kustomizeconfig.yaml")] = []byte(kustomizeConfig)
+	files[ServicePath(TargetEKS, name, "base", "kustomization.yaml")] = baseKustomization
+	files[ServicePath(TargetEKS, name, "base", "kustomizeconfig.yaml")] = []byte(kustomizeConfig)
 
 	devK := overlay(name, "dev", ref)
 
@@ -110,7 +110,7 @@ func Files(data []byte, domain string) (name string, files map[string][]byte, er
 	if err != nil {
 		return "", nil, fmt.Errorf("marshaling dev kustomization: %w", err)
 	}
-	files[ServicePath("eks", name, "dev", "kustomization.yaml")] = devKustomization
+	files[ServicePath(TargetEKS, name, "dev", "kustomization.yaml")] = devKustomization
 
 	return name, files, nil
 }

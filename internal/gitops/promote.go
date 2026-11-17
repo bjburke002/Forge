@@ -3,7 +3,6 @@ package gitops
 import (
 	"errors"
 	"fmt"
-	"path"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
@@ -36,7 +35,7 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 			return "", nil, fmt.Errorf("marshaling prod kustomization: %w", err)
 		}
 		files := make(map[string][]byte)
-		files[path.Join("services", name, "prod", "kustomization.yaml")] = prodKustomization
+		files[ServicePath("eks", name, "prod", "kustomization.yaml")] = prodKustomization
 		return ref.tag, files, nil
 	}
 
@@ -85,7 +84,7 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 	}
 
 	f := make(map[string][]byte)
-	f[ServicePath("eks", name, "prod", "kustomization.yaml")] = prodManifest
+	f[ServicePath(TargetEKS, name, "prod", "kustomization.yaml")] = prodManifest
 
 	return ref.tag, f, nil
 }
