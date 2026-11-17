@@ -15,11 +15,11 @@ spec:
       repoURL: https://github.com/bjburke002/forge-gitops.git
       revision: main 
       directories:
-      - path: services/*/dev
-      - path: services/*/prod
+      - path: eks/services/*/dev
+      - path: eks/services/*/prod
   template:
     metadata:
-      name: '{{index .path.segments 1}}-{{.path.basename}}'
+      name: '{{index .path.segments 2}}-{{.path.basename}}'
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
@@ -30,7 +30,7 @@ spec:
         path: '{{.path.path}}'
       destination:
         server: https://kubernetes.default.svc
-        namespace: '{{index .path.segments 1}}-{{.path.basename}}'
+        namespace: '{{index .path.segments 2}}-{{.path.basename}}'
       syncPolicy:
         managedNamespaceMetadata:
           labels:

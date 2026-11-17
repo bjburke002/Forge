@@ -3,7 +3,6 @@ package gitops
 import (
 	"errors"
 	"fmt"
-	"path"
 
 	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -59,7 +58,7 @@ func Files(data []byte, domain string) (name string, files map[string][]byte, er
 	}
 
 	files = make(map[string][]byte)
-	files[path.Join("services", name, "base", "forgeservice.yaml")] = baseCR
+	files[ServicePath("eks", name, "base", "forgeservice.yaml")] = baseCR
 
 	baseK := kustomization{
 		APIVersion:     kustomizeAPIVersion,
@@ -72,8 +71,8 @@ func Files(data []byte, domain string) (name string, files map[string][]byte, er
 	if err != nil {
 		return "", nil, fmt.Errorf("marshaling base kustomization: %w", err)
 	}
-	files[path.Join("services", name, "base", "kustomization.yaml")] = baseKustomization
-	files[path.Join("services", name, "base", "kustomizeconfig.yaml")] = []byte(kustomizeConfig)
+	files[ServicePath("eks", name, "base", "kustomization.yaml")] = baseKustomization
+	files[ServicePath("eks", name, "base", "kustomizeconfig.yaml")] = []byte(kustomizeConfig)
 
 	devK := overlay(name, "dev", ref)
 
@@ -111,8 +110,7 @@ func Files(data []byte, domain string) (name string, files map[string][]byte, er
 	if err != nil {
 		return "", nil, fmt.Errorf("marshaling dev kustomization: %w", err)
 	}
-
-	files[path.Join("services", name, "dev", "kustomization.yaml")] = devKustomization
+	files[ServicePath("eks", name, "dev", "kustomization.yaml")] = devKustomization
 
 	return name, files, nil
 }

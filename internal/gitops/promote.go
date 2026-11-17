@@ -85,6 +85,7 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 	}
 
 	f := make(map[string][]byte)
-	f[path.Join("services", name, "prod", "kustomization.yaml")] = prodManifest
+	f[ServicePath("eks", name, "prod", "kustomization.yaml")] = prodManifest
+
 	return ref.tag, f, nil
 }
