@@ -522,7 +522,7 @@ This section resolves the central contradiction in Revision 1. There is no imper
 forge create forgeservice.yaml
         |
         +--> validates the ForgeService against the CRD
-        +--> opens a PR against the GitOps repo adding services/payments/{base,dev}
+        +--> opens a PR against the GitOps repo adding eks/services/payments/{base,dev}
                     |
                     v (human merges)
               GitOps repo
@@ -559,14 +559,14 @@ The ApplicationSet is the glue Revision 1 left unspecified. A git directory gene
 
 **Two repositories.** Platform components are Applications in charts/platform in this repository: Terraform creates one root Application pointing there, and each component appears as its own Application with its own sync status and history. Service desired state lives in a separate repository, forge-gitops (layout in §19), which keeps CI's frequent image-tag commits out of the platform repository. The ApplicationSet and its AppProject live in charts/platform, not in forge-gitops, because they decide what may be deployed: anyone who can merge to forge-gitops can add a service folder, but not change the generator or loosen the project.
 
-**As built.** A git directory generator watches services/*/dev and services/*/prod in forge-gitops and creates one Application per folder, named and namespaced &lt;service&gt;-&lt;environment&gt;, with CreateNamespace. Each namespace gets the readiness-gate label (§11), the forge.dev/tenant label that tenant policies select on, and the Pod Security restricted labels (§16.2). The AppProject allows forge-gitops as the only source, namespaces ending in -dev or -prod on this cluster as the only destinations, ForgeService as the only namespaced kind and Namespace as the only cluster-scoped one, so a raw Deployment committed to forge-gitops is refused. Argo CD also leaves kinds the project does not permit out of an Application's resource tree, so a service's tree shows only its ForgeService; the rendered children are visible through kubectl and the ForgeService's status. That is the price of the restriction, since Argo CD has no view-only permission that would show them without allowing them to be deployed. Argo CD polls Git, so changes appear within about three minutes.
+**As built.** A git directory generator watches eks/services/*/dev and eks/services/*/prod in forge-gitops and creates one Application per folder, named and namespaced &lt;service&gt;-&lt;environment&gt;, with CreateNamespace. Each namespace gets the readiness-gate label (§11), the forge.dev/tenant label that tenant policies select on, and the Pod Security restricted labels (§16.2). The AppProject allows forge-gitops as the only source, namespaces ending in -dev or -prod on this cluster as the only destinations, ForgeService as the only namespaced kind and Namespace as the only cluster-scoped one, so a raw Deployment committed to forge-gitops is refused. Argo CD also leaves kinds the project does not permit out of an Application's resource tree, so a service's tree shows only its ForgeService; the rendered children are visible through kubectl and the ForgeService's status. That is the price of the restriction, since Argo CD has no view-only permission that would show them without allowing them to be deployed. Argo CD polls Git, so changes appear within about three minutes.
 
 **The CLI as built.** cmd/forge holds only the Cobra commands; the logic lives in internal/config, internal/validate, internal/gitops, internal/status and internal/slo, which take plain values and never read the configuration themselves.
 
 - *Configuration.* One YAML file outside the repository describes the installation, not a service: the GitOps repository and branch, the platform domain, the Argo CD namespace, an optional kube context, and the AMP endpoint and region. It is read from --config, or ~/.config/forge/config.yaml, or the operating system's configuration directory. Flags override FORGE_* environment variables, which override the file, which overrides the defaults.
 - *Validation without a cluster.* The generated CRD is embedded in the binary. validate, and create before it opens anything, check apiVersion, kind and name, prune and report unknown fields, apply the schema's defaults, then run the OpenAPI schema and the CEL rules with the same apiextensions libraries the API server uses. Errors carry field paths, so a misspelled field and the required field it left out are both reported. A server-side dry run against a live cluster is not built.
-- *create.* Takes a finished ForgeService, as the CRD defines it, rather than building one from flags. It writes payments' layout: the CR in base with its image replaced by a placeholder, a kustomizeconfig that makes spec.image an image field, and a dev overlay with the namespace, the real image name and tag, and a patch that sets the host to &lt;name&gt;-dev.&lt;domain&gt;, so dev and prod never claim the same host. A tag is required; digests are rejected. The image must already exist, so a team builds first and then registers. There is no prod folder, so merging brings up dev only. It refuses if the service folder or its branch already exists, and --dry-run prints the files instead.
-- *promote.* Reads the dev overlay from the GitOps repository's main branch and copies its image into prod. The first promotion writes a new prod overlay; later ones change only newTag and keep everything else in the file, such as an env patch. If prod already runs that tag, nothing is opened.
+- *create.* Takes a finished ForgeService, as the CRD defines it, rather than building one from flags. It writes payments' layout: the CR in base with its image replaced by a placeholder, a kustomizeconfig that makes spec.image an image field, and a dev overlay with the namespace, the real image name and tag, and a patch that sets the host to &lt;name&gt;-dev.&lt;domain&gt;, so dev and prod never claim the same host. A tag is required; digests are rejected. The image must already exist, so a team builds first and then registers. There is no prod folder, so merging brings up dev only. --target picks the backend and defaults to eks; ecs is refused until the ECS backend exists. It refuses if the service already exists under either backend or its branch exists, and --dry-run prints the files instead.
+- *promote.* Reads the dev overlay from the GitOps repository's main branch and copies its image into prod. The first promotion writes a new prod overlay; later ones change only newTag and keep everything else in the file, such as an env patch. If prod already runs that tag, nothing is opened. It finds the service's backend from where its folder is in the GitOps repository; a --target, if given, must match.
 - *Pull requests.* Every change is one commit, made through GitHub's Git Data API without cloning: a tree built on main, a commit, a branch named forge/create-&lt;name&gt; or forge/promote-&lt;name&gt;, and a pull request. The token comes from FORGE_GITHUB_TOKEN, then GITHUB_TOKEN, then gh auth token. There is no token flag, since flags end up in shell history, and the token is never printed or stored in the configuration. A fine-grained token limited to forge-gitops, with read and write access to contents and pull requests, is enough. Pull requests are authored by the person running the CLI.
 - *status.* Reads the Argo Application and the ForgeService for each environment with one dynamic client, so Argo CD's Go module is not a dependency. Besides sync, health, readiness, available replicas, image and URL, it reports a spec the controller has not yet reconciled and the reason behind a Ready or Degraded condition. A missing Application or ForgeService reads as not deployed, not as an error.
 - *slo.* Signs requests to AMP with SigV4 using the caller's AWS credentials, and runs the same queries as the dashboard's SLO row, so the numbers match it. It needs no cluster: the data lives in AMP.
@@ -807,20 +807,23 @@ Revision 1 did not address environments. Under a \$50 ceiling the answer is a si
 | Blast radius | Shared control plane, shared node pool, shared ALB. | Isolated per environment. |
 | Access | One RBAC model, namespace-scoped roles. | Separate credentials per environment. |
 
-The GitOps repository (forge-gitops) is laid out by service, then environment, so everything about a service is one folder and onboarding a service is one pull request:
+The GitOps repository (forge-gitops) is laid out by backend, then service, then environment, so everything about a service is one folder and onboarding a service is one pull request:
 
 ```text
 forge-gitops/
-└── services/
-    └── payments/
-        ├── base/
-        │   ├── forgeservice.yaml   # production values, placeholder image, no namespace, no env
-        │   ├── kustomizeconfig.yaml # teaches Kustomize that spec.image is an image field
-        │   └── kustomization.yaml
-        ├── dev/
-        │   └── kustomization.yaml  # payments-dev: image tag, env, minReplicas 1, dev host, no SLO
-        └── prod/
-            └── kustomization.yaml  # payments-prod: image tag, env
+├── eks/
+│   └── services/
+│       └── payments/
+│           ├── base/
+│           │   ├── forgeservice.yaml   # production values, placeholder image, no namespace, no env
+│           │   ├── kustomizeconfig.yaml # teaches Kustomize that spec.image is an image field
+│           │   └── kustomization.yaml
+│           ├── dev/
+│           │   └── kustomization.yaml  # payments-dev: image tag, env, minReplicas 1, dev host, no SLO
+│           └── prod/
+│               └── kustomization.yaml  # payments-prod: image tag, env
+└── ecs/
+    └── services/                   # reserved for the planned ECS on Fargate backend
 ```
 
 The base holds production's values, so prod is the one environment defined without overrides. env lives only in the overlays: patches to a custom resource merge lists by replacing them, so an env list split between base and overlay would silently lose entries. The ApplicationSet and AppProject that read this repository live in charts/platform (§14).
@@ -1002,7 +1005,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | Burn-rate alerts and owner routing | Cut | Designed in §18.3; the dashboard and forge slo show the 1h and 6h burn rates. Kept out of Phase 9 as more than a proof of concept needs. Building it needs burn-rate rules for the remaining windows (5m, 30m, 2h, 1d, 3d), alert rules for prod namespaces, AMP's alert manager and an SNS topic with an email subscription; routing on spec.owner would follow. Without it, the 500 test can only show the budget burn, not an alert (§20, §23). |
 | Zone spread when a zone is lost | Open | The zone constraint uses the default node taints policy, so a zone whose nodes are cordoned or unreachable still counts when spreading. With two zones, maxSkew 1 and DoNotSchedule, a replacement replica then waits for that zone's nodes to disappear instead of moving at once. Setting nodeTaintsPolicy to Honor on that constraint fixes it; one line in the renderer. |
 | CLI: rollback and logs | Not built | A rollback is a revert of the promotion pull request in GitHub; logs come from kubectl (§14). |
-| CLI: server-side validation and overlays | Deferred | forge validate checks a single ForgeService file offline. A --server dry run against a live cluster, and validating an environment by rendering its overlay with kustomize's Go library first, were planned. The second would allow a forge-gitops pull request check over services/*/dev and services/*/prod. |
+| CLI: server-side validation and overlays | Deferred | forge validate checks a single ForgeService file offline. A --server dry run against a live cluster, and validating an environment by rendering its overlay with kustomize's Go library first, were planned. The second would allow a forge-gitops pull request check over eks/services/*/dev and eks/services/*/prod. |
 | CLI: key order in generated files | Accepted | create and promote write YAML through sigs.k8s.io/yaml, which sorts keys alphabetically. New files read slightly differently from hand-written ones, and the first promotion of a hand-written prod overlay shows the whole file reordered; later promotions change only the tag. Editing with a YAML node tree (go.yaml.in/yaml/v3) would keep the original order. |
 | Per-service SLO targets | Deferred | Every service uses 99.9%. Reading the contract's slo field needs the controller to publish each target as a metric for the AMP rules to use; dev overlays set slo to null and would then show no SLO. |
 | ALB-generated 503s in the SLI | Open | 503s the ALB returns when a service has no healthy targets are counted per load balancer, not per target group, so the SLI misses them (§18.1). Candidate fix: count minutes with no healthy targets as fully bad in the time-based budget. |
