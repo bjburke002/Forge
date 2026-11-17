@@ -113,7 +113,7 @@ Then build and tear down the platform as needed:
 ## Deploying a service
 
 Argo CD installs the controller, its CRD and RBAC with the rest of the platform. A
-service is a folder in forge-gitops (`services/<name>/{base,dev,prod}`); the
+service is a folder in forge-gitops (`eks/services/<name>/{base,dev,prod}`); the
 ApplicationSet creates an Application per environment, named and namespaced
 `<name>-dev` and `<name>-prod`.
 
@@ -141,14 +141,15 @@ verify it, or build it yourself:
 | Command | Does | Needs |
 |---|---|---|
 | `forge validate <file>` | Checks a ForgeService against the CRD's schema and CEL rules | Nothing: offline |
-| `forge create <file>` | Validates it and opens a pull request adding `services/<name>/base` and `dev` | GitHub token |
+| `forge create <file>` | Validates it and opens a pull request adding `eks/services/<name>/base` and `dev` | GitHub token |
 | `forge promote <name>` | Opens a pull request copying dev's image to the prod overlay | GitHub token |
 | `forge status <name>` | Argo CD sync and health, readiness, replicas, image and URL for dev and prod | Cluster access |
 | `forge slo <name>` | 30-day availability, budget left and 1h and 6h burn rates from AMP | AWS credentials |
 | `forge config view` | Prints the resolved configuration | Nothing |
 
 `create` and `promote` take `--dry-run` to print the files instead of opening a pull
-request. Every command takes `--config <path>` and `--context <kube context>`.
+request. `create` takes `--target` (default `eks`); `promote` finds the service's
+backend itself, and a `--target` given to it must match. Only `eks` is supported so far. Every command takes `--config <path>` and `--context <kube context>`.
 
 **Configuration.** The CLI reads `~/.config/forge/config.yaml` if it exists, otherwise
 `config.yaml` in a `forge` folder under the operating system's configuration directory,
