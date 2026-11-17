@@ -45,7 +45,7 @@ func TestFiles(t *testing.T) {
 	}
 
 	// Base CR: image swapped for the placeholder, everything else kept.
-	cr := unmarshal[map[string]any](t, files["services/payments/base/forgeservice.yaml"])
+	cr := unmarshal[map[string]any](t, files["eks/services/payments/base/forgeservice.yaml"])
 	spec, _ := cr["spec"].(map[string]any)
 	if spec["image"] != "payments-api" {
 		t.Errorf("base spec.image = %v, want the placeholder payments-api", spec["image"])
@@ -54,15 +54,15 @@ func TestFiles(t *testing.T) {
 		t.Errorf("base spec.owner = %v, want it unchanged", spec["owner"])
 	}
 
-	base := unmarshal[kustomization](t, files["services/payments/base/kustomization.yaml"])
+	base := unmarshal[kustomization](t, files["eks/services/payments/base/kustomization.yaml"])
 	if strings.Join(base.Resources, ",") != "forgeservice.yaml" || strings.Join(base.Configurations, ",") != "kustomizeconfig.yaml" {
 		t.Errorf("base kustomization = %+v", base)
 	}
-	if string(files["services/payments/base/kustomizeconfig.yaml"]) != kustomizeConfig {
+	if string(files["eks/services/payments/base/kustomizeconfig.yaml"]) != kustomizeConfig {
 		t.Error("kustomizeconfig.yaml doesn't match the constant")
 	}
 
-	dev := unmarshal[kustomization](t, files["services/payments/dev/kustomization.yaml"])
+	dev := unmarshal[kustomization](t, files["eks/services/payments/dev/kustomization.yaml"])
 	if dev.Namespace != "payments-dev" || strings.Join(dev.Resources, ",") != "../base" {
 		t.Errorf("dev namespace/resources = %q/%v", dev.Namespace, dev.Resources)
 	}
@@ -82,7 +82,7 @@ func TestFilesWithoutIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Files: %v", err)
 	}
-	dev := unmarshal[kustomization](t, files["services/payments/dev/kustomization.yaml"])
+	dev := unmarshal[kustomization](t, files["eks/services/payments/dev/kustomization.yaml"])
 	if len(dev.Patches) != 0 {
 		t.Errorf("dev patches = %+v, want none", dev.Patches)
 	}

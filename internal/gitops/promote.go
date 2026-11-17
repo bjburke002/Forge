@@ -35,7 +35,7 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 			return "", nil, fmt.Errorf("marshaling prod kustomization: %w", err)
 		}
 		files := make(map[string][]byte)
-		files[ServicePath("eks", name, "prod", "kustomization.yaml")] = prodKustomization
+		files[ServicePath(TargetEKS, name, "prod", "kustomization.yaml")] = prodKustomization
 		return ref.tag, files, nil
 	}
 
