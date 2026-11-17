@@ -132,31 +132,6 @@ func (c *GitHubClient) OpenPR(ctx context.Context, branch, title, body string, f
 	return pr.GetHTMLURL(), nil
 }
 
-// ServiceExists checks whether or not the ForgeService already exists in the gitops repo
-func (c *GitHubClient) ServiceExists(ctx context.Context, name string) (bool, error) {
-	svcPath := path.Join("services", name)
-
-	opts := &github.RepositoryContentGetOptions{
-		Ref: c.baseBranch,
-	}
-
-	_, _, repoResp, err := c.client.Repositories.GetContents(
-		ctx,
-		c.owner,
-		c.repoName,
-		svcPath,
-		opts,
-	)
-	if err == nil {
-		return true, nil
-	}
-	if repoResp != nil && repoResp.StatusCode == http.StatusNotFound {
-		return false, nil
-	}
-
-	return false, fmt.Errorf("verifying service  %q exists: %w", name, err)
-}
-
 // BranchExists checks whether or not the requested branch already exists in the gitops repo
 func (c *GitHubClient) BranchExists(ctx context.Context, branch string) (bool, error) {
 	branchPath := path.Join("heads", branch)
@@ -171,6 +146,37 @@ func (c *GitHubClient) BranchExists(ctx context.Context, branch string) (bool, e
 	return false, fmt.Errorf("verifying branch %q exists: %w", branchPath, err)
 }
 
+// InferTarget checks for service existence in the forge-gitops repo, and infers which target (ECS or EKS) contains
+// manifests related to the service
+func (c *GitHubClient) InferTarget(ctx context.Context, svcName string) (string, bool, error) {
+	eksPath := ServicePath(TargetEKS, svcName, "base", "forgeservice.yaml")
+	ecsPath := ServicePath(TargetECS, svcName, "base", "forgeservice.yaml")
+
+	_, eksFound, err := c.ReadFile(ctx, eksPath)
+	if err != nil {
+		return "", false, fmt.Errorf("checking %s: %w", eksPath, err)
+	}
+
+	_, ecsFound, err := c.ReadFile(ctx, ecsPath)
+	if err != nil {
+		return "", false, fmt.Errorf("checking %s: %w", ecsPath, err)
+	}
+
+	switch {
+	case eksFound && ecsFound:
+		return "", false, fmt.Errorf("service %s already exists under both %s and %s, remove one", svcName, eksPath, ecsPath)
+	case eksFound:
+		return TargetEKS, true, nil
+	case ecsFound:
+		return TargetECS, true, nil
+	default:
+		return "", false, nil
+	}
+
+}
+
+// ReadFile is a method on custom type GitHubClient that parses the contents of a file at the provided filepath and stores
+// in a []byte
 func (c *GitHubClient) ReadFile(ctx context.Context, filePath string) ([]byte, bool, error) {
 	opts := &github.RepositoryContentGetOptions{
 		Ref: c.baseBranch,

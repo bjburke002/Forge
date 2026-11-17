@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path"
 	"slices"
 
 	"github.com/bjburke002/forge/internal/gitops"
@@ -13,12 +12,20 @@ import (
 
 func newPromoteCmd(opts *rootOptions) *cobra.Command {
 	var dryRun bool
+	var target string
 	cmd := &cobra.Command{
 		Use:   "promote <name>",
 		Short: "Promote ForgeService from dev to prod",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+
+			if target != "" && target != gitops.TargetECS && target != gitops.TargetEKS {
+				return fmt.Errorf("target must either be empty, eks, or ecs: got %q", target)
+			}
+			if target == gitops.TargetECS {
+				return errors.New("ecs not currently supported")
+			}
 
 			if opts.cfg.GitOpsRepo.Owner == "" {
 				return errors.New("no GitOps repo configured: set gitopsRepo in the forge config or FORGE_GITOPS_REPO")
@@ -34,15 +41,21 @@ func newPromoteCmd(opts *rootOptions) *cobra.Command {
 				return err
 			}
 
-			svcExists, err := c.ServiceExists(cmd.Context(), name)
+			inferredTarget, svcExists, err := c.InferTarget(cmd.Context(), name)
 			if err != nil {
 				return err
 			}
 			if !svcExists {
-				return fmt.Errorf("service %q not found in forge-gitops", name)
+				return fmt.Errorf("service %s does not exist in forge-gitops", name)
+			}
+			if target != "" && target != inferredTarget {
+				return fmt.Errorf("target %q doesn't match inferred target %q", target, inferredTarget)
+			}
+			if inferredTarget == gitops.TargetECS {
+				return fmt.Errorf("inferred target is %s, which is not supported", inferredTarget)
 			}
 
-			devPath := path.Join("services", name, "dev", "kustomization.yaml")
+			devPath := gitops.ServicePath(inferredTarget, name, "dev", "kustomization.yaml")
 			d, found, err := c.ReadFile(cmd.Context(), devPath)
 			if err != nil {
 				return fmt.Errorf("reading dev overlay: %w", err)
@@ -51,15 +64,15 @@ func newPromoteCmd(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("dev overlay not found at %q", devPath)
 			}
 
-			prodPath := path.Join("services", name, "prod", "kustomization.yaml")
+			prodPath := gitops.ServicePath(inferredTarget, name, "prod", "kustomization.yaml")
 			p, found, err := c.ReadFile(cmd.Context(), prodPath)
 			var body string
-			if !found {
-				p = nil
-				body = "Adds services/" + name + "/prod"
-			}
 			if err != nil {
 				return fmt.Errorf("reading prod overlay: %w", err)
+			}
+			if !found {
+				p = nil
+				body = "Adds " + inferredTarget + "/services/" + name + "/prod"
 			}
 
 			tag, files, err := gitops.PromoteFiles(d, p, name)
@@ -98,5 +111,6 @@ func newPromoteCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the files that would be committed instead of opening the PR")
+	cmd.Flags().StringVar(&target, "target", "", "Set the target platform for this promotion: EKS or ECS")
 	return cmd
 }

@@ -36,7 +36,7 @@ jobs:
       contents: read
     defaults:
       run:
-        working-directory: 'services/payments/dev'
+        working-directory: 'eks/services/payments/dev'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

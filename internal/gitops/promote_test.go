@@ -38,7 +38,7 @@ patches:
           value: info
 `
 
-const prodPath = "services/payments/prod/kustomization.yaml"
+const prodPath = "eks/services/payments/prod/kustomization.yaml"
 
 func TestPromoteFilesFirstPromotion(t *testing.T) {
 	tag, files, err := PromoteFiles([]byte(testDev), nil, "payments")

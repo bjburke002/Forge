@@ -15,12 +15,20 @@ import (
 
 func newCreateCmd(opts *rootOptions) *cobra.Command {
 	var dryRun bool
+	var target string
 	cmd := &cobra.Command{
 		Use:   "create <file>",
 		Short: "Create a new Forge Service in a GitOps repository",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := args[0]
+
+			if target != gitops.TargetECS && target != gitops.TargetEKS {
+				return fmt.Errorf("target must either be eks or ecs, got %q", target)
+			}
+			if target == gitops.TargetECS {
+				return errors.New("ecs not currently supported")
+			}
 
 			cr, err := os.ReadFile(path)
 			if err != nil {
@@ -69,12 +77,12 @@ func newCreateCmd(opts *rootOptions) *cobra.Command {
 				return err
 			}
 
-			svcExists, err := c.ServiceExists(cmd.Context(), name)
+			existingTarget, svcExists, err := c.InferTarget(cmd.Context(), name)
 			if err != nil {
 				return err
 			}
 			if svcExists {
-				return fmt.Errorf("service %q already exists", name)
+				return fmt.Errorf("service %q already exists under %s", name, existingTarget)
 			}
 
 			branch := "forge/create-" + name
@@ -87,7 +95,7 @@ func newCreateCmd(opts *rootOptions) *cobra.Command {
 			}
 
 			title := "forge: add " + name
-			body := fmt.Sprintf("Opened by forge create\n\nAdds services/%s/base and dev. Prod is added later with forge promote", name)
+			body := fmt.Sprintf("Opened by forge create\n\nAdds %s/services/%s/base and dev. Prod is added later with forge promote", target, name)
 
 			url, err := c.OpenPR(cmd.Context(), branch, title, body, files)
 			if err != nil {
@@ -98,5 +106,6 @@ func newCreateCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the files that would be committed instead of opening the PR")
+	cmd.Flags().StringVar(&target, "target", "eks", "Set the target platform: EKS or ECS")
 	return cmd
 }
