@@ -3,7 +3,7 @@ locals {
 }
 
 module "vpc" {
-  source = "./modules/vpc"
+  source = "../modules/vpc"
 
   vpc_cidr_block = "10.20.0.0/16"
   number_of_azs  = 2
@@ -11,7 +11,7 @@ module "vpc" {
 }
 
 module "eks" {
-  source = "./modules/eks"
+  source = "../modules/eks"
 
   cluster_name             = local.cluster_name
   subnet_ids               = module.vpc.private_subnet_ids
@@ -20,14 +20,14 @@ module "eks" {
 }
 
 module "iam" {
-  source = "./modules/iam"
+  source = "../modules/iam"
 
   cluster_name = module.eks.cluster_name
   domain_name  = "forgeappservices.com"
 }
 
 module "argocd" {
-  source = "./modules/argocd"
+  source = "../modules/argocd"
 
   repo_url = var.repo_url
   revision = var.revision
@@ -38,7 +38,7 @@ module "argocd" {
 }
 
 module "karpenter" {
-  source = "./modules/karpenter"
+  source = "../modules/karpenter"
 
   cluster_name = module.eks.cluster_name
 }
