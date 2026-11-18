@@ -29,4 +29,9 @@ report "Elastic IPs (billing)" "$(ec2 describe-addresses --filters "${TAGS[@]}" 
 
 report "VPC" "$(ec2 describe-vpcs --filters "${TAGS[@]}" --query 'Vpcs[].VpcId')"
 
+# The pipeline treats /forge/ecs/* as "the ECS foundation is up" (E4.2), so a parameter
+# that outlives a destroy would make it deploy into a foundation that isn't there.
+report "SSM parameters" "$(aws ssm get-parameters-by-path --region "$REGION" --path /forge/ecs \
+  --output text --query 'Parameters[].Name')"
+
 [[ $found -eq 0 ]] && echo "No leftovers." || exit 1
