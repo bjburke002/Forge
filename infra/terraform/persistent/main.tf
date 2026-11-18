@@ -60,3 +60,12 @@ module "amp" {
   amp_alias = "forge-amp"
   slo_rules = file("${path.root}/../../../observability/amp-rules/slo.yaml")
 }
+
+module "ecs-iam" {
+  source = "../modules/ecs-iam"
+
+  cluster_name             = local.cluster_name
+  gitops_repository        = var.gitops_repository
+  allowed_branch           = var.allowed_branch
+  github_oidc_provider_arn = module.github_oidc.github_oidc_provider_arn
+}
