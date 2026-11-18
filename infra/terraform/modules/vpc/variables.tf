@@ -23,3 +23,15 @@ variable "cluster_name" {
   type        = string
   description = "EKS cluster name used for the karpenter.sh/discovery subnet tag"
 }
+
+variable "private_subnets" {
+  type        = bool
+  default     = true
+  description = "Create private subnets with a NAT gateway. Set false for public-only VPC"
+}
+
+variable "eks_tags" {
+  type        = bool
+  default     = true
+  description = "Adds Kubernetes load balancer and Karpenter discovery tags to the subnets. Set false to leave these out"
+}

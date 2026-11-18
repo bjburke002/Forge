@@ -16,6 +16,6 @@ output "vpc_cidr_block" {
 }
 
 output "nat_public_ip" {
-  value       = aws_eip.nat.public_ip
+  value       = one(aws_eip.nat[*].public_ip)
   description = "This will change on every rebuild, if torn down you will probably have to update an IP whitelist somewhere after it comes back up."
 }
