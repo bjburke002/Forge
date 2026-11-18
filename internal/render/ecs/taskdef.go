@@ -1,6 +1,10 @@
 package ecs
 
-import "github.com/bjburke002/forge/pkg/contract/v1alpha1"
+import (
+	"fmt"
+
+	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
+)
 
 const (
 	logGroupId       = "LogGroup"
@@ -116,14 +120,19 @@ func taskDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]Res
 		},
 	}
 
+	cpuSize, memSize, err := taskSize(fsvc.Spec.Resources)
+	if err != nil {
+		return nil, fmt.Errorf("sizing task for %s: %w", fsvc.Name, err)
+	}
+
 	taskDef := Resource{
 		Type: "AWS::ECS::TaskDefinition",
 		Properties: TaskDefinitionProperties{
 			Family:                  name,
 			RequiresCompatibilities: []string{"FARGATE"},
 			NetworkMode:             "awsvpc",
-			CPU:                     "256",
-			Memory:                  "512",
+			CPU:                     cpuSize,
+			Memory:                  memSize,
 			ExecutionRoleArn:        ref(paramExecutionRoleArn),
 			ContainerDefinitions:    []ContainerDefinition{container},
 			Volumes: []Volume{

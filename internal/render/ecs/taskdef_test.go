@@ -14,10 +14,11 @@ func testService(env ...v1alpha1.EnvVar) *v1alpha1.ForgeService {
 	return &v1alpha1.ForgeService{
 		ObjectMeta: metav1.ObjectMeta{Name: "payments"},
 		Spec: v1alpha1.ForgeServiceSpec{
-			Owner:   "payments-team",
-			Image:   testImage,
-			Runtime: v1alpha1.RuntimeSpec{Port: 8080},
-			Env:     env,
+			Owner:     "payments-team",
+			Image:     testImage,
+			Runtime:   v1alpha1.RuntimeSpec{Port: 8080},
+			Env:       env,
+			Resources: resources("25m", "128Mi"),
 		},
 	}
 }
@@ -54,6 +55,10 @@ func TestTaskDefinition(t *testing.T) {
 	}
 	if !reflect.DeepEqual(td.RequiresCompatibilities, []string{"FARGATE"}) || td.NetworkMode != "awsvpc" {
 		t.Errorf("compatibilities %v, network mode %q; want [FARGATE], awsvpc", td.RequiresCompatibilities, td.NetworkMode)
+	}
+	// The rounding rule's result for payments (E3.2): 0.25 vCPU and the 1 GB floor.
+	if td.CPU != "256" || td.Memory != "1024" {
+		t.Errorf("task size = %s / %s, want 256 / 1024", td.CPU, td.Memory)
 	}
 	if !reflect.DeepEqual(td.ExecutionRoleArn, ref(paramExecutionRoleArn)) {
 		t.Errorf("execution role = %v, want a Ref to %s", td.ExecutionRoleArn, paramExecutionRoleArn)
