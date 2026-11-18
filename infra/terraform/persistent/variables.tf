@@ -13,3 +13,8 @@ variable "allowed_branch" {
   type        = string
   description = "The allowed branch for the OIDC provider."
 }
+
+variable "gitops_repository" {
+  type        = string
+  description = "The GitOps repository name for the OIDC provider"
+}
