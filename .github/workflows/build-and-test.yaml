@@ -186,8 +186,15 @@ jobs:
           terraform init -backend=false
           terraform validate
       
-      - name: Terraform Init and Validate - Root
+      - name: Terraform Init and Validate - EKS Root
         run: |
+          cd eks
           terraform init -backend=false 
+          terraform validate
+      
+      - name: Terraform Init and Validate - ECS Root
+        run: |
+          cd ecs
+          terraform init -backend=false
           terraform validate
         
