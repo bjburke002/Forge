@@ -6,6 +6,7 @@ provider "aws" {
     tags = {
       Project   = "forge"
       ManagedBy = "terraform"
+      Backend   = "eks"
     }
   }
 }
