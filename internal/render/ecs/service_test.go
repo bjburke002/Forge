@@ -156,3 +156,25 @@ func TestServiceTargetCPU(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceLoadBalancer(t *testing.T) {
+	// With ingress: attached to the target group, and created after the listener rule.
+	res, err := serviceDefinition(withIngress(testHost, "/"), "dev")
+	if err != nil {
+		t.Fatalf("serviceDefinition: %v", err)
+	}
+	s := res[serviceId].Properties.(ServiceProperties)
+	wantLB := []LoadBalancer{{ContainerName: "payments", ContainerPort: 8080, TargetGroupArn: ref(targetGroupId)}}
+	if !reflect.DeepEqual(s.LoadBalancers, wantLB) || s.HealthCheckGracePeriodSeconds != healthCheckGracePeriodSeconds {
+		t.Errorf("load balancers %+v, grace period %d", s.LoadBalancers, s.HealthCheckGracePeriodSeconds)
+	}
+	if !reflect.DeepEqual(res[serviceId].DependsOn, []string{listenerRuleId}) {
+		t.Errorf("DependsOn = %v, want [%s]", res[serviceId].DependsOn, listenerRuleId)
+	}
+
+	// Without ingress: none of the above.
+	r := renderService(t, testService(), "dev")
+	if r.service.LoadBalancers != nil || r.service.HealthCheckGracePeriodSeconds != 0 {
+		t.Errorf("worker service has load balancer settings: %+v", r.service)
+	}
+}

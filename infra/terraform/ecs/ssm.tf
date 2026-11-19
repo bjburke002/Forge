@@ -39,3 +39,10 @@ resource "aws_ssm_parameter" "alb_zone_id" {
   type        = "String"
   value       = module.ecs-alb.alb_hosted_zone_id
 }
+
+resource "aws_ssm_parameter" "ecs_vpc_id" {
+  name        = "/forge/ecs/vpc-id"
+  description = "The ECS VPC ID"
+  type        = "String"
+  value       = module.vpc.vpc_id
+}

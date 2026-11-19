@@ -15,15 +15,20 @@ const (
 // Matching the CRD's +kubebuilder:default=75
 const defaultTargetCPU = 75
 
+// Gives new tasks time to start before the ALB health checks count
+const healthCheckGracePeriodSeconds = 60
+
 type ServiceProperties struct {
-	ServiceName              string                         `json:"ServiceName"`
-	Cluster                  any                            `json:"Cluster"`
-	TaskDefinition           any                            `json:"TaskDefinition"`
-	CapacityProviderStrategy []CapacityProviderStrategyItem `json:"CapacityProviderStrategy"`
-	NetworkConfiguration     NetworkConfiguration           `json:"NetworkConfiguration"`
-	DeploymentConfiguration  DeploymentConfiguration        `json:"DeploymentConfiguration"`
-	PropagateTags            string                         `json:"PropagateTags"`
-	Tags                     []Tag                          `json:"Tags"`
+	ServiceName                   string                         `json:"ServiceName"`
+	Cluster                       any                            `json:"Cluster"`
+	TaskDefinition                any                            `json:"TaskDefinition"`
+	CapacityProviderStrategy      []CapacityProviderStrategyItem `json:"CapacityProviderStrategy"`
+	NetworkConfiguration          NetworkConfiguration           `json:"NetworkConfiguration"`
+	LoadBalancers                 []LoadBalancer                 `json:"LoadBalancers,omitempty"`
+	HealthCheckGracePeriodSeconds int                            `json:"HealthCheckGracePeriodSeconds,omitempty"`
+	DeploymentConfiguration       DeploymentConfiguration        `json:"DeploymentConfiguration"`
+	PropagateTags                 string                         `json:"PropagateTags"`
+	Tags                          []Tag                          `json:"Tags"`
 }
 
 type CapacityProviderStrategyItem struct {
@@ -104,6 +109,14 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 		return nil, fmt.Errorf("environment %q not supported", envName)
 	}
 
+	loadBalancers := []LoadBalancer{
+		{
+			ContainerName:  fsvc.Name,
+			ContainerPort:  fsvc.Spec.Runtime.Port,
+			TargetGroupArn: ref(targetGroupId),
+		},
+	}
+
 	serviceProperties := ServiceProperties{
 		ServiceName:              name,
 		Cluster:                  ref(paramClusterName),
@@ -126,6 +139,11 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 		},
 		PropagateTags: "SERVICE",
 		Tags:          serviceTags(fsvc.Name, envName, fsvc.Spec.Owner),
+	}
+
+	if fsvc.Spec.Ingress != nil {
+		serviceProperties.LoadBalancers = loadBalancers
+		serviceProperties.HealthCheckGracePeriodSeconds = healthCheckGracePeriodSeconds
 	}
 
 	scalableTargetProps := ScalableTargetProperties{
@@ -156,6 +174,11 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 	service := Resource{
 		Type:       "AWS::ECS::Service",
 		Properties: serviceProperties,
+	}
+
+	if fsvc.Spec.Ingress != nil {
+		// ECS rejects a target group that isn't attached to a listener yet
+		service.DependsOn = []string{listenerRuleId}
 	}
 
 	scalableTarget := Resource{

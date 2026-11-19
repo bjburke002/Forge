@@ -9,6 +9,7 @@ const (
 	paramALBZoneId           = "ALBZoneId"
 	paramExecutionRoleArn    = "ExecutionRoleArn"
 	paramHostedZoneId        = "HostedZoneId"
+	paramVPCId               = "VPCId"
 )
 
 const ssmString = "AWS::SSM::Parameter::Value<String>"
@@ -54,6 +55,11 @@ func platformParameters() map[string]Parameter {
 			Type:        "AWS::SSM::Parameter::Value<AWS::Route53::HostedZone::Id>",
 			Description: "Route53 Hosted Zone for forgeappservices.com",
 			Default:     "/forge/shared/hosted-zone-id",
+		},
+		paramVPCId: {
+			Type:        "AWS::SSM::Parameter::Value<AWS::EC2::VPC::Id>",
+			Description: "The VPC ID of the ECS VPC",
+			Default:     "/forge/ecs/vpc-id",
 		},
 	}
 }
