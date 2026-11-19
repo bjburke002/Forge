@@ -15,6 +15,7 @@ import (
 
 func newRenderCmd(opts *rootOptions) *cobra.Command {
 	var env string
+	var stackName bool
 	cmd := &cobra.Command{
 		Use:   "render <file> --env dev|prod",
 		Short: "Render ECS Template for the selected environment",
@@ -56,6 +57,11 @@ func newRenderCmd(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("%s: %w", file, err)
 			}
 
+			if stackName {
+				fmt.Fprintln(cmd.OutOrStdout(), ecs.ResourceName(fsvc.Name, env))
+				return nil
+			}
+
 			tmpl, err := ecs.Render(&fsvc, env)
 			if err != nil {
 				return fmt.Errorf("rendering ECS template: %w", err)
@@ -71,6 +77,7 @@ func newRenderCmd(opts *rootOptions) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&env, "env", "", "Set the target environment for the ECS Service: dev or prod")
+	cmd.Flags().BoolVar(&stackName, "stack-name", false, "Produce only the stack name for the ECS service")
 	cmd.MarkFlagRequired("env")
 	return cmd
 }
