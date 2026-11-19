@@ -31,10 +31,6 @@ func ref(name string) map[string]string {
 	return map[string]string{"Ref": name}
 }
 
-func getAtt(resource, attr string) map[string][]string {
-	return map[string][]string{"Fn::GetAtt": {resource, attr}}
-}
-
 func sub(s string) map[string]string {
 	return map[string]string{"Fn::Sub": s}
 }
