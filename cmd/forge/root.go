@@ -46,5 +46,6 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newStatusCmd(opts))
 	cmd.AddCommand(newSLOCmd(opts))
 	cmd.AddCommand(newPromoteCmd(opts))
+	cmd.AddCommand(newRenderCmd(opts))
 	return cmd
 }
