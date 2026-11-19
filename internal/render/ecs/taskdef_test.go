@@ -19,6 +19,7 @@ func testService(env ...v1alpha1.EnvVar) *v1alpha1.ForgeService {
 			Runtime:   v1alpha1.RuntimeSpec{Port: 8080},
 			Env:       env,
 			Resources: resources("25m", "128Mi"),
+			Scaling:   v1alpha1.ScalingSpec{MinReplicas: 2, MaxReplicas: 5},
 		},
 	}
 }
