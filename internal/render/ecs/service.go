@@ -49,7 +49,7 @@ type AwsvpcConfiguration struct {
 
 type DeploymentConfiguration struct {
 	MinimumHealthyPercent    int                      `json:"MinimumHealthyPercent"`
-	MaximumPercent           int                      `json:"Maximumercent"`
+	MaximumPercent           int                      `json:"MaximumPercent"`
 	DeploymentCircuitBreaker DeploymentCircuitBreaker `json:"DeploymentCircuitBreaker"`
 }
 

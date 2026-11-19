@@ -1,0 +1,357 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Forge service forge-payments-prod",
+  "Parameters": {
+    "ALBDNSName": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "DNS Name for the ALB",
+      "Default": "/forge/ecs/alb-dns-name"
+    },
+    "ALBZoneId": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "Route53 Zone ID for ECS ALB",
+      "Default": "/forge/ecs/alb-zone-id"
+    },
+    "ClusterName": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "ECS ClusterName",
+      "Default": "/forge/ecs/cluster-name"
+    },
+    "ExecutionRoleArn": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "ARN for the ECS Execution Role",
+      "Default": "/forge/shared/ecs-task-execution-role-arn"
+    },
+    "HTTPSListenerArn": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "ECS ALB HTTPS Listener ARN",
+      "Default": "/forge/ecs/https-listener-arn"
+    },
+    "HostedZoneId": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::Route53::HostedZone::Id>",
+      "Description": "Route53 Hosted Zone for forgeappservices.com",
+      "Default": "/forge/shared/hosted-zone-id"
+    },
+    "PrivateSubnetIds": {
+      "Type": "AWS::SSM::Parameter::Value<List<AWS::EC2::Subnet::Id>>",
+      "Description": "List of IDs for the ECS private subnets",
+      "Default": "/forge/ecs/private-subnet-ids"
+    },
+    "TaskSecurityGroupId": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::SecurityGroup::Id>",
+      "Description": "ID for the ECS Task Security Group",
+      "Default": "/forge/ecs/task-security-group-id"
+    },
+    "VPCId": {
+      "Type": "AWS::SSM::Parameter::Value<AWS::EC2::VPC::Id>",
+      "Description": "The VPC ID of the ECS VPC",
+      "Default": "/forge/ecs/vpc-id"
+    }
+  },
+  "Resources": {
+    "ListenerRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": {
+          "Ref": "HTTPSListenerArn"
+        },
+        "Priority": 41702,
+        "Conditions": [
+          {
+            "Field": "host-header",
+            "HostHeaderConfig": {
+              "Values": [
+                "payments.forgeappservices.com"
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Ref": "TargetGroup"
+            }
+          }
+        ]
+      }
+    },
+    "LogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": "forge-payments-prod",
+        "RetentionInDays": 7,
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "forge"
+          },
+          {
+            "Key": "Backend",
+            "Value": "ecs"
+          },
+          {
+            "Key": "Service",
+            "Value": "payments"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "Owner",
+            "Value": "payments-team"
+          }
+        ]
+      }
+    },
+    "RecordSet": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneId": {
+          "Ref": "HostedZoneId"
+        },
+        "Name": "payments.forgeappservices.com",
+        "Type": "A",
+        "AliasTarget": {
+          "DNSName": {
+            "Ref": "ALBDNSName"
+          },
+          "HostedZoneId": {
+            "Ref": "ALBZoneId"
+          },
+          "EvaluateTargetHealth": false
+        }
+      }
+    },
+    "ScalableTarget": {
+      "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+      "Properties": {
+        "ServiceNamespace": "ecs",
+        "ScalableDimension": "ecs:service:DesiredCount",
+        "ResourceId": {
+          "Fn::Sub": "service/${ClusterName}/forge-payments-prod"
+        },
+        "MinCapacity": 2,
+        "MaxCapacity": 5
+      },
+      "DependsOn": [
+        "Service"
+      ]
+    },
+    "ScalingPolicy": {
+      "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
+      "Properties": {
+        "PolicyName": "forge-payments-prod-cpu",
+        "PolicyType": "TargetTrackingScaling",
+        "ScalingTargetId": {
+          "Ref": "ScalableTarget"
+        },
+        "TargetTrackingScalingPolicyConfiguration": {
+          "TargetValue": 75,
+          "PredefinedMetricSpecification": {
+            "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
+          }
+        }
+      }
+    },
+    "Service": {
+      "Type": "AWS::ECS::Service",
+      "Properties": {
+        "ServiceName": "forge-payments-prod",
+        "Cluster": {
+          "Ref": "ClusterName"
+        },
+        "TaskDefinition": {
+          "Ref": "TaskDefinition"
+        },
+        "CapacityProviderStrategy": [
+          {
+            "CapacityProvider": "FARGATE",
+            "Base": 1,
+            "Weight": 0
+          },
+          {
+            "CapacityProvider": "FARGATE_SPOT",
+            "Weight": 1
+          }
+        ],
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "Subnets": {
+              "Ref": "PrivateSubnetIds"
+            },
+            "SecurityGroups": [
+              {
+                "Ref": "TaskSecurityGroupId"
+              }
+            ],
+            "AssignPublicIp": "DISABLED"
+          }
+        },
+        "LoadBalancers": [
+          {
+            "ContainerName": "payments",
+            "ContainerPort": 8080,
+            "TargetGroupArn": {
+              "Ref": "TargetGroup"
+            }
+          }
+        ],
+        "HealthCheckGracePeriodSeconds": 60,
+        "DeploymentConfiguration": {
+          "MinimumHealthyPercent": 100,
+          "MaximumPercent": 200,
+          "DeploymentCircuitBreaker": {
+            "Enable": true,
+            "Rollback": true
+          }
+        },
+        "PropagateTags": "SERVICE",
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "forge"
+          },
+          {
+            "Key": "Backend",
+            "Value": "ecs"
+          },
+          {
+            "Key": "Service",
+            "Value": "payments"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "Owner",
+            "Value": "payments-team"
+          }
+        ]
+      },
+      "DependsOn": [
+        "ListenerRule"
+      ]
+    },
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Port": 8080,
+        "Protocol": "HTTP",
+        "TargetType": "ip",
+        "VpcId": {
+          "Ref": "VPCId"
+        },
+        "HealthCheckPath": "/health/ready",
+        "HealthCheckProtocol": "HTTP",
+        "TargetGroupAttributes": [
+          {
+            "Key": "deregistration_delay.timeout_seconds",
+            "Value": "30"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "forge"
+          },
+          {
+            "Key": "Backend",
+            "Value": "ecs"
+          },
+          {
+            "Key": "Service",
+            "Value": "payments"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "Owner",
+            "Value": "payments-team"
+          }
+        ]
+      }
+    },
+    "TaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": "forge-payments-prod",
+        "RequiresCompatibilities": [
+          "FARGATE"
+        ],
+        "NetworkMode": "awsvpc",
+        "Cpu": "256",
+        "Memory": "1024",
+        "ExecutionRoleArn": {
+          "Ref": "ExecutionRoleArn"
+        },
+        "ContainerDefinitions": [
+          {
+            "Name": "payments",
+            "Image": "241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api:abc123",
+            "Essential": true,
+            "PortMappings": [
+              {
+                "ContainerPort": 8080,
+                "Protocol": "tcp"
+              }
+            ],
+            "ReadonlyRootFilesystem": true,
+            "User": "65532",
+            "Privileged": false,
+            "MountPoints": [
+              {
+                "SourceVolume": "tmp",
+                "ContainerPath": "/tmp",
+                "ReadOnly": false
+              }
+            ],
+            "LogConfiguration": {
+              "LogDriver": "awslogs",
+              "Options": {
+                "awslogs-group": {
+                  "Ref": "LogGroup"
+                },
+                "awslogs-region": {
+                  "Ref": "AWS::Region"
+                },
+                "awslogs-stream-prefix": "payments"
+              }
+            }
+          }
+        ],
+        "Volumes": [
+          {
+            "Name": "tmp"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "forge"
+          },
+          {
+            "Key": "Backend",
+            "Value": "ecs"
+          },
+          {
+            "Key": "Service",
+            "Value": "payments"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "Owner",
+            "Value": "payments-team"
+          }
+        ]
+      }
+    }
+  }
+}
