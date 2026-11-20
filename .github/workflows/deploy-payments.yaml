@@ -34,9 +34,6 @@ jobs:
     needs: deploy-payments-api
     permissions:
       contents: read
-    defaults:
-      run:
-        working-directory: 'eks/services/payments/dev'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -47,7 +44,10 @@ jobs:
       - name: Set Image Tag
         env:
           IMAGE: ${{needs.deploy-payments-api.outputs.image}}
-        run: kustomize edit set image "payments-api=$IMAGE"
+        run: | 
+          for dir in eks/services/payments/dev ecs/services/billing/dev; do
+            (cd $"dir" && kustomize edit set image "payments-api=$IMAGE")
+          done
 
       - name: Commit and Push
         env: 
@@ -56,7 +56,8 @@ jobs:
         run: |
           git config user.name 'forge-deploy-bot'
           git config user.email '41898282+forge-deploy-bot@users.noreply.github.com'
-          git add kustomization.yaml
+          git add eks/services/payments/dev/kustomization.yaml
+          git add ecs/services/billing/dev/kustomization.yaml
           # Nothing to commit if this SHA is already deployed (e.g. a re-run).
           git diff --cached --quiet && exit 0
           git commit -m "deploy($SERVICE): $IMAGE_TAG"
