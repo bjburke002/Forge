@@ -18,7 +18,7 @@ jobs:
         working-directory: 'examples/payments-api'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -86,7 +86,7 @@ jobs:
 
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set Up Go
         uses: actions/setup-go@v5
@@ -170,7 +170,7 @@ jobs:
         working-directory: 'infra/terraform'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
