@@ -1,0 +1,54 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ExistingECSServices",
+            "Effect": "Deny",
+            "Action": [
+                "ecs:UpdateService",
+                "ecs:DeleteService"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:ResourceTag/Backend": "ecs"
+                },
+                "ArnNotLike": {
+                    "aws:PrincipalArn": "arn:aws:iam::241197444395:role/forge-ecs-cloudformation-role"
+                }
+            }
+        },
+        {
+            "Sid": "NewECSServices",
+            "Effect": "Deny",
+            "Action": [
+                "ecs:CreateService"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "StringEquals": {
+                    "aws:RequestTag/Backend": "ecs"
+                },
+                "ArnNotLike": {
+                    "aws:PrincipalArn": "arn:aws:iam::241197444395:role/forge-ecs-cloudformation-role"
+                }
+            }
+        },
+        {
+            "Sid": "Scaling",
+            "Effect": "Deny",
+            "Action": [
+                "application-autoscaling:RegisterScalableTarget",
+                "application-autoscaling:DeregisterScalableTarget",
+                "application-autoscaling:PutScalingPolicy",
+                "application-autoscaling:DeleteScalingPolicy"
+            ],
+            "Resource": "*",
+            "Condition": {
+                "ArnNotLike": {
+                    "aws:PrincipalArn": "arn:aws:iam::241197444395:role/forge-ecs-cloudformation-role"
+                }
+            }
+        }
+    ]
+}
