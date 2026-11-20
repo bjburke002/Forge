@@ -24,10 +24,13 @@ validate: init ## Check formatting and validate configuration
 plan: validate ## Plan changes to the ECS root
 	terraform plan -input=false -out=$(PLAN_FILE)
 
-# Redeploying every ECS service from forge-gitops is added here in E4.4.
-up: plan ## Apply the plan
+up: plan ## Apply the plan and deploy every ECS service in forge-gitops
 	terraform apply -input=false $(PLAN_FILE)
 	rm -f $(PLAN_FILE)
+	gh workflow run deploy-ecs.yaml -R bjburke002/forge-gitops -f deploy_all=true && \
+	sleep 5 && \
+	runID=$$(gh run list -R bjburke002/forge-gitops -w deploy-ecs.yaml -e workflow_dispatch -L 1 --json databaseId -q '.[0].databaseId') && \
+	gh run watch "$$runID" -R bjburke002/forge-gitops --exit-status
 
 down: ## Delete the ECS service stacks, destroy the ECS root, then check for leftovers
 	./scripts/ecs-teardown.sh "$(AWS_REGION)"
