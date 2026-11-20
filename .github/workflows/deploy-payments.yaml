@@ -46,7 +46,7 @@ jobs:
           IMAGE: ${{needs.deploy-payments-api.outputs.image}}
         run: | 
           for dir in eks/services/payments/dev ecs/services/billing/dev; do
-            (cd $"dir" && kustomize edit set image "payments-api=$IMAGE")
+            (cd "$dir" && kustomize edit set image "payments-api=$IMAGE")
           done
 
       - name: Commit and Push
