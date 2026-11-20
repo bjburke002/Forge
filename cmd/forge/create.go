@@ -26,9 +26,6 @@ func newCreateCmd(opts *rootOptions) *cobra.Command {
 			if target != gitops.TargetECS && target != gitops.TargetEKS {
 				return fmt.Errorf("target must either be eks or ecs, got %q", target)
 			}
-			if target == gitops.TargetECS {
-				return errors.New("ecs not currently supported")
-			}
 
 			cr, err := os.ReadFile(path)
 			if err != nil {
@@ -51,7 +48,7 @@ func newCreateCmd(opts *rootOptions) *cobra.Command {
 				return fmt.Errorf("%s: %d validation error(s)", path, len(errs))
 			}
 
-			name, files, err := gitops.Files(cr, opts.cfg.Domain)
+			name, files, err := gitops.Files(cr, opts.cfg.Domain, target)
 			if err != nil {
 				return fmt.Errorf("creating files: %w", err)
 			}

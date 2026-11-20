@@ -8,7 +8,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][]byte, err error) {
+func PromoteFiles(dev, prod []byte, name, target string) (tag string, files map[string][]byte, err error) {
 	var devK kustomization
 	if err := yaml.Unmarshal(dev, &devK); err != nil {
 		return "", nil, fmt.Errorf("parsing dev kustomization: %w", err)
@@ -35,7 +35,7 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 			return "", nil, fmt.Errorf("marshaling prod kustomization: %w", err)
 		}
 		files := make(map[string][]byte)
-		files[ServicePath(TargetEKS, name, "prod", "kustomization.yaml")] = prodKustomization
+		files[ServicePath(target, name, "prod", "kustomization.yaml")] = prodKustomization
 		return ref.tag, files, nil
 	}
 
@@ -84,7 +84,7 @@ func PromoteFiles(dev, prod []byte, name string) (tag string, files map[string][
 	}
 
 	f := make(map[string][]byte)
-	f[ServicePath(TargetEKS, name, "prod", "kustomization.yaml")] = prodManifest
+	f[ServicePath(target, name, "prod", "kustomization.yaml")] = prodManifest
 
 	return ref.tag, f, nil
 }

@@ -41,7 +41,7 @@ patches:
 const prodPath = "eks/services/payments/prod/kustomization.yaml"
 
 func TestPromoteFilesFirstPromotion(t *testing.T) {
-	tag, files, err := PromoteFiles([]byte(testDev), nil, "payments")
+	tag, files, err := PromoteFiles([]byte(testDev), nil, "payments", TargetEKS)
 	if err != nil {
 		t.Fatalf("PromoteFiles: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestPromoteFilesFirstPromotion(t *testing.T) {
 }
 
 func TestPromoteFilesUpdatesTagOnly(t *testing.T) {
-	tag, files, err := PromoteFiles([]byte(testDev), []byte(testProd), "payments")
+	tag, files, err := PromoteFiles([]byte(testDev), []byte(testProd), "payments", TargetEKS)
 	if err != nil {
 		t.Fatalf("PromoteFiles: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestPromoteFilesUpdatesTagOnly(t *testing.T) {
 
 func TestPromoteFilesAlreadyOnTag(t *testing.T) {
 	prod := strings.Replace(testProd, "oldtag", "newtag", 1)
-	tag, files, err := PromoteFiles([]byte(testDev), []byte(prod), "payments")
+	tag, files, err := PromoteFiles([]byte(testDev), []byte(prod), "payments", TargetEKS)
 	if err != nil {
 		t.Fatalf("PromoteFiles: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestPromoteFilesErrors(t *testing.T) {
 			if tc.prod != "" {
 				prod = []byte(tc.prod)
 			}
-			if _, _, err := PromoteFiles([]byte(tc.dev), prod, "payments"); err == nil {
+			if _, _, err := PromoteFiles([]byte(tc.dev), prod, "payments", TargetEKS); err == nil {
 				t.Fatal("expected an error, got nil")
 			}
 		})

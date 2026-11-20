@@ -33,7 +33,7 @@ func unmarshal[T any](t *testing.T, data []byte) T {
 }
 
 func TestFiles(t *testing.T) {
-	name, files, err := Files([]byte(testCR), "example.com")
+	name, files, err := Files([]byte(testCR), "example.com", TargetEKS)
 	if err != nil {
 		t.Fatalf("Files: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestFiles(t *testing.T) {
 func TestFilesWithoutIngress(t *testing.T) {
 	cr := strings.Replace(testCR, "  ingress:\n    host: payments.example.com\n", "", 1)
 	// No ingress, so no domain is needed and no host patch is written.
-	_, files, err := Files([]byte(cr), "")
+	_, files, err := Files([]byte(cr), "", TargetEKS)
 	if err != nil {
 		t.Fatalf("Files: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestFilesErrors(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := Files([]byte(tc.cr), tc.domain); err == nil {
+			if _, _, err := Files([]byte(tc.cr), tc.domain, TargetEKS); err == nil {
 				t.Fatal("expected an error, got nil")
 			}
 		})
