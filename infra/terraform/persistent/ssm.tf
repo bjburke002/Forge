@@ -11,3 +11,10 @@ resource "aws_ssm_parameter" "hosted_zone_id" {
   type        = "String"
   value       = data.aws_route53_zone.forge.zone_id
 }
+
+resource "aws_ssm_parameter" "ecs_cloudformation_role_arn" {
+  name        = "/forge/shared/ecs-cloudformation-role-arn"
+  description = "The CloudFormation Service role ARN"
+  type        = "String"
+  value       = module.ecs-iam.cloudformation_role_arn
+}

@@ -13,3 +13,7 @@ variable "allowed_branch" {
 variable "github_oidc_provider_arn" {
   type = string
 }
+
+variable "hosted_zone_id" {
+  type = string
+}
