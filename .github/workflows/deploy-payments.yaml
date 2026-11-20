@@ -39,7 +39,7 @@ jobs:
         working-directory: 'eks/services/payments/dev'
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: bjburke002/forge-gitops
           ssh-key: ${{secrets.GITOPS_DEPLOY_KEY}}

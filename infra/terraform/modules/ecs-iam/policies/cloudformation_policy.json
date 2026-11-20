@@ -40,7 +40,8 @@
       "Effect": "Allow",
       "Action": [
         "route53:ChangeResourceRecordSets",
-        "route53:ListResourceRecordSets"
+        "route53:ListResourceRecordSets",
+        "route53:GetHostedZone"
       ],
       "Resource": "arn:aws:route53:::hostedzone/${hosted_zone_id}"
     },
@@ -91,6 +92,16 @@
         "cloudwatch:PutMetricAlarm",
         "cloudwatch:DeleteAlarms",
         "cloudwatch:DescribeAlarms"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ValidateParameterTypes",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeSecurityGroups"
       ],
       "Resource": "*"
     },
