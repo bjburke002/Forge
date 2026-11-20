@@ -68,4 +68,5 @@ module "ecs-iam" {
   gitops_repository        = var.gitops_repository
   allowed_branch           = var.allowed_branch
   github_oidc_provider_arn = module.github_oidc.github_oidc_provider_arn
+  hosted_zone_id           = data.aws_route53_zone.forge.zone_id
 }

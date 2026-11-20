@@ -25,3 +25,7 @@ output "forge_amp_id" {
 output "forge_amp_endpoint" {
   value = module.amp.forge_amp_endpoint
 }
+
+output "cloudformation_role_arn" {
+  value = module.ecs-iam.cloudformation_role_arn
+}
