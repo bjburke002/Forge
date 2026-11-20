@@ -23,9 +23,6 @@ func newPromoteCmd(opts *rootOptions) *cobra.Command {
 			if target != "" && target != gitops.TargetECS && target != gitops.TargetEKS {
 				return fmt.Errorf("target must either be empty, eks, or ecs: got %q", target)
 			}
-			if target == gitops.TargetECS {
-				return errors.New("ecs not currently supported")
-			}
 
 			if opts.cfg.GitOpsRepo.Owner == "" {
 				return errors.New("no GitOps repo configured: set gitopsRepo in the forge config or FORGE_GITOPS_REPO")
@@ -51,9 +48,6 @@ func newPromoteCmd(opts *rootOptions) *cobra.Command {
 			if target != "" && target != inferredTarget {
 				return fmt.Errorf("target %q doesn't match inferred target %q", target, inferredTarget)
 			}
-			if inferredTarget == gitops.TargetECS {
-				return fmt.Errorf("inferred target is %s, which is not supported", inferredTarget)
-			}
 
 			devPath := gitops.ServicePath(inferredTarget, name, "dev", "kustomization.yaml")
 			d, found, err := c.ReadFile(cmd.Context(), devPath)
@@ -75,7 +69,7 @@ func newPromoteCmd(opts *rootOptions) *cobra.Command {
 				body = "Adds " + inferredTarget + "/services/" + name + "/prod"
 			}
 
-			tag, files, err := gitops.PromoteFiles(d, p, name)
+			tag, files, err := gitops.PromoteFiles(d, p, name, inferredTarget)
 			if err != nil {
 				return fmt.Errorf("checking overlays: %w", err)
 			}
