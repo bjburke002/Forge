@@ -43,6 +43,27 @@
         "arn:aws:ssm:${region}:${account_id}:parameter/forge/ecs/*",
         "arn:aws:ssm:${region}:${account_id}:parameter/forge/shared/*"
       ]
+    },
+    {
+      "Sid": "ECRLogin",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken"
+      ],
+      "Resource": [
+        "*"
+      ]
+    },
+    {
+      "Sid": "ReadForgeImages",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer"
+      ],
+      "Resource": [
+        "arn:aws:ecr:${region}:${account_id}:repository/forge/*"
+      ]
     }
   ]
 }
