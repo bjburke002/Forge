@@ -16,17 +16,18 @@ import (
 
 // Result is the full status of one service in one environment. Combines its Argo Application and Forge Service
 type Result struct {
-	Environment   string
-	Deployed      bool
-	ArgoSync      string
-	ArgoHealth    string
-	ArgoRevision  string
-	FsvcReady     string
-	FsvcAvailable int32
-	FsvcImage     string
-	FsvcURL       string
-	Stale         bool
-	Conditions    []string
+	Environment string
+	Deployed    bool
+	Sync        string
+	Health      string
+	Revision    string
+	Ready       string
+	Available   int32
+	Image       string
+	URL         string
+	Stale       bool
+	Conditions  []string
+	Backend     string
 }
 
 var (
@@ -50,9 +51,9 @@ func Get(ctx context.Context, c dynamic.Interface, argoNamespace, name string) (
 		case err != nil:
 			return nil, fmt.Errorf("getting Argo application %q: %w", envName, err)
 		default:
-			r.ArgoSync, _, _ = unstructured.NestedString(argo.Object, "status", "sync", "status")
-			r.ArgoHealth, _, _ = unstructured.NestedString(argo.Object, "status", "health", "status")
-			r.ArgoRevision, _, _ = unstructured.NestedString(argo.Object, "status", "sync", "revision")
+			r.Sync, _, _ = unstructured.NestedString(argo.Object, "status", "sync", "status")
+			r.Health, _, _ = unstructured.NestedString(argo.Object, "status", "health", "status")
+			r.Revision, _, _ = unstructured.NestedString(argo.Object, "status", "sync", "revision")
 		}
 
 		fsvc, err := c.Resource(fGVR).Namespace(envName).Get(ctx, name, metav1.GetOptions{})
@@ -72,13 +73,13 @@ func Get(ctx context.Context, c dynamic.Interface, argoNamespace, name string) (
 			}
 			cond := meta.FindStatusCondition(v.Status.Conditions, v1alpha1.ConditionReady)
 			if cond == nil {
-				r.FsvcReady = "Unknown"
+				r.Ready = "Unknown"
 			} else {
-				r.FsvcReady = string(cond.Status)
+				r.Ready = string(cond.Status)
 			}
-			r.FsvcAvailable = v.Status.AvailableReplicas
-			r.FsvcImage = v.Spec.Image
-			r.FsvcURL = v.Status.URL
+			r.Available = v.Status.AvailableReplicas
+			r.Image = v.Spec.Image
+			r.URL = v.Status.URL
 			r.Stale = v.Generation != v.Status.ObservedGeneration
 
 			if cond != nil && cond.Status != metav1.ConditionTrue {
@@ -90,6 +91,7 @@ func Get(ctx context.Context, c dynamic.Interface, argoNamespace, name string) (
 				r.Conditions = append(r.Conditions, fmt.Sprintf("%s: %s: %s", degraded.Type, degraded.Reason, degraded.Message))
 			}
 		}
+		r.Backend = "eks"
 		results = append(results, r)
 	}
 	return results, nil

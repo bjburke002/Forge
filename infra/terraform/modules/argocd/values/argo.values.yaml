@@ -76,10 +76,10 @@ configs:
       local ready = nil
       local degraded = nil
       if obj.status.conditions ~= nil then
-        for _, condition in iparis(obj.status.conditions) do
-          if condition.Type == "Ready" then
+        for _, condition in ipairs(obj.status.conditions) do
+          if condition.type == "Ready" then
             ready = condition
-          elseif condition.Type == "Degraded" then
+          elseif condition.type == "Degraded" then
             degraded = condition
           end
         end
@@ -90,12 +90,12 @@ configs:
         hs.message = degraded.message
         return hs
       end
-      if ready ~= nil and condition.status == "True" then
+      if ready ~= nil and ready.status == "True" then
         hs.status = "Healthy"
         hs.message = ready.message
         return hs
       end
 
-      h.status = "Progressing"
-      h.message = (ready ~= nil and ready.message) or "Waiting for the Ready condition"
+      hs.status = "Progressing"
+      hs.message = (ready ~= nil and ready.message) or "Waiting for the Ready condition"
       return hs
