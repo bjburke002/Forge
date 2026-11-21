@@ -58,8 +58,8 @@ func newStatusCmd(opts *rootOptions) *cobra.Command {
 					fmt.Fprintln(w, strings.Join(row, "\t"))
 					continue
 				}
-				row := []string{res.Environment, dash(res.ArgoSync), dash(res.ArgoHealth), dash(res.FsvcReady),
-					strconv.Itoa(int(res.FsvcAvailable)), dash(res.FsvcImage), dash(res.FsvcURL)}
+				row := []string{res.Environment, dash(res.Sync), dash(res.Health), dash(res.Ready),
+					strconv.Itoa(int(res.Available)), dash(res.Image), dash(res.URL)}
 				fmt.Fprintln(w, strings.Join(row, "\t"))
 			}
 			w.Flush()
