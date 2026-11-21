@@ -38,11 +38,20 @@ func Render(fsvc *v1alpha1.ForgeService, envName string) (*Template, error) {
 		}
 	}
 
+	outputs := map[string]Output{}
+	if fsvc.Spec.Ingress != nil {
+		outputs["URL"] = Output{
+			Value:       "https://" + fsvc.Spec.Ingress.Host,
+			Description: "ForgeService Domain name",
+		}
+	}
+
 	return &Template{
 		AWSTemplateFormatVersion: "2010-09-09",
 		Description:              "Forge service " + ResourceName(fsvc.Name, envName),
 		Parameters:               platformParameters(),
 		Resources:                resources,
+		Outputs:                  outputs,
 	}, nil
 }
 

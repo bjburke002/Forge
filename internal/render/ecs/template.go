@@ -6,6 +6,7 @@ type Template struct {
 	Description              string               `json:"Description,omitempty"`
 	Parameters               map[string]Parameter `json:"Parameters"`
 	Resources                map[string]Resource  `json:"Resources"`
+	Outputs                  map[string]Output    `json:"Outputs,omitempty"`
 }
 
 // Parameter defines the params used in Template. These are built in params.go
@@ -25,6 +26,12 @@ type Resource struct {
 	Type       string   `json:"Type"`
 	Properties any      `json:"Properties"`
 	DependsOn  []string `json:"DependsOn,omitempty"`
+}
+
+// Outputs define outputs used to display various information by the CLI
+type Output struct {
+	Description string `json:"Description"`
+	Value       string `json:"Value"`
 }
 
 func ref(name string) map[string]string {

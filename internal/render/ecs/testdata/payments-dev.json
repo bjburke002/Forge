@@ -348,5 +348,11 @@
         ]
       }
     }
+  },
+  "Outputs": {
+    "URL": {
+      "Description": "ForgeService Domain name",
+      "Value": "https://payments-dev.forgeappservices.com"
+    }
   }
 }
