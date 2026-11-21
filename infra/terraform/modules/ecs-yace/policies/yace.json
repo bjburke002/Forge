@@ -1,0 +1,38 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "CloudWatchMetrics",
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:GetMetricData",
+                "cloudwatch:ListMetrics"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "Discovery",
+            "Effect": "Allow",
+            "Action": [
+                "tag:GetResources"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "RemoteWrite",
+            "Effect": "Allow",
+            "Action": [
+                "aps:RemoteWrite"
+            ],
+            "Resource": "${aws_amp_arn}"
+        },
+        {
+            "Sid": "ListAccountAliases",
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListAccountAliases"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
