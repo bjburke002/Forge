@@ -60,6 +60,7 @@ func Get(ctx context.Context, c dynamic.Interface, argoNamespace, name string) (
 		switch {
 		case apierrors.IsNotFound(err):
 			r.Deployed = false
+			r.Backend = "eks"
 			results = append(results, r)
 			continue
 		case err != nil:
