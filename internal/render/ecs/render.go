@@ -41,7 +41,7 @@ func Render(fsvc *v1alpha1.ForgeService, envName string) (*Template, error) {
 	outputs := map[string]Output{}
 	if fsvc.Spec.Ingress != nil {
 		outputs["URL"] = Output{
-			Value:       "https://" + fsvc.Spec.Ingress.Host,
+			Value:       "https://" + fsvc.Spec.Ingress.Host + fsvc.Spec.Ingress.Path,
 			Description: "ForgeService Domain name",
 		}
 	}

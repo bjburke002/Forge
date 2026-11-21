@@ -357,7 +357,7 @@
   "Outputs": {
     "URL": {
       "Description": "ForgeService Domain name",
-      "Value": "https://payments.forgeappservices.com"
+      "Value": "https://payments.forgeappservices.com/"
     }
   }
 }
