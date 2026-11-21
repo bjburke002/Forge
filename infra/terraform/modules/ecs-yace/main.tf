@@ -153,7 +153,7 @@ resource "aws_ecs_task_definition" "yace" {
       environment = [
         { name = "AOT_CONFIG_CONTENT", value = local.adot_config }
       ]
-      dependsOn   = [{ containerName = "yace", condition = "START" }]
+      dependsOn = [{ containerName = "yace", condition = "START" }]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
