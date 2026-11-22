@@ -100,7 +100,7 @@ locals {
                 - targets: ["localhost:5000"]
 
     exporters:
-      prometheusremotewrite:
+      prometheus_remote_write:
         endpoint: ${var.amp_remote_write_url}
         auth:
           authenticator: sigv4auth
@@ -110,7 +110,7 @@ locals {
       pipelines:
         metrics:
           receivers: [prometheus]
-          exporters: [prometheusremotewrite]
+          exporters: [prometheus_remote_write]
   EOT
 }
 
