@@ -1,8 +1,8 @@
 # Forge
 
-An AWS-native internal developer platform on EKS. Teams describe a service in a short
-contract; the platform builds, deploys, exposes and observes it, with secure defaults
-baked in.
+An AWS-native internal developer platform with two backends: EKS and ECS on Fargate.
+Teams describe a service in a short contract; the platform builds, deploys, exposes and
+observes it, with secure defaults baked in.
 
 ## What it does
 
@@ -10,6 +10,9 @@ baked in.
   keep costs low; only state that must survive lives in a separate Terraform root.
 - **GitOps:** Terraform builds AWS and bootstraps Argo CD; Argo CD installs the platform
   from this repository and services from forge-gitops.
+- **Two backends, one contract:** a service's folder in forge-gitops (`eks/` or `ecs/`)
+  decides where it runs. On EKS the Forge controller renders it; on ECS a pipeline
+  renders it to a CloudFormation stack. Signing, promotion and SLOs are the same on both.
 - **Supply chain:** every image is scanned with Trivy before it is pushed, and signed
   keylessly with cosign alongside a signed SPDX SBOM.
 - **Admission policy:** Kyverno admits only images signed by this repository's build
@@ -19,36 +22,39 @@ baked in.
 - **SLOs:** availability measured at the load balancer, a 30-day error budget and burn
   rates kept in Amazon Managed Service for Prometheus so they survive teardown, and one
   provisioned Grafana dashboard for every service.
-- **Shared ingress:** one ALB for all services, TLS from an ACM wildcard certificate,
-  DNS managed by ExternalDNS.
+- **Shared ingress:** one ALB for all services on each backend, TLS from an ACM wildcard
+  certificate, DNS managed by ExternalDNS on EKS and by each service's stack on ECS.
 - **A thin CLI:** `forge` validates a ForgeService offline against the CRD, opens the
-  pull requests that register and promote a service, and reports Argo CD and SLO state.
-  It never writes to the cluster.
+  pull requests that register and promote a service, and reports deployment and SLO
+  state on both backends. It never writes to the cluster or to AWS.
 - **Spot-first capacity** via Karpenter, with hard limits as a cost guardrail, and
-  replicas spread across nodes and availability zones.
+  replicas spread across nodes and availability zones; Fargate Spot on ECS.
 - **No long-lived credentials:** Identity Center for people, GitHub OIDC for CI,
   EKS Pod Identity for workloads, External Secrets for application secrets.
 
 ## Architecture
 
-    Terraform ──> VPC · EKS · IAM · Argo CD
-                                    │
-                                    ▼
-               Argo CD ──> platform components (this repo, charts/platform)
-                       └──> services (forge-gitops) ──> Forge controller ──> Deployment, Ingress, ...
-                                    ▲
-    GitHub Actions ──> scan, SBOM, sign ──> ECR ──> image tag commit to forge-gitops
-    forge create / promote ──────────────────────> pull request on forge-gitops
+    EKS    Terraform ──> VPC · EKS · IAM · Argo CD
+           Argo CD ──> platform components (this repo, charts/platform)
+                   └──> services (forge-gitops eks/) ──> Forge controller ──> Deployment, Ingress, ...
 
-See the [architecture document](docs/architecture.md) for the full design and the
-[contract decisions](docs/service-contract-decisions.md) for how the service contract was settled.
+    ECS    Terraform ──> VPC · ECS cluster · shared ALB · YACE
+           deploy-ecs workflow ──> services (forge-gitops ecs/) ──> forge render ──> CloudFormation stack
+
+    Both   GitHub Actions ──> scan, SBOM, sign ──> ECR ──> image tag commit to forge-gitops
+           forge create / promote ──────────────────────> pull request on forge-gitops
+
+See the [architecture document](docs/architecture.md) for the full design (the ECS
+backend is §27) and the [contract decisions](docs/service-contract-decisions.md) for how
+the service contract was settled.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `infra/terraform/` | Main root: VPC, EKS, IAM, Karpenter, Argo CD bootstrap |
-| `infra/terraform/persistent/` | Resources that survive teardown (ECR template, CI role, certificate, secrets, the AMP workspace and its rules) |
+| `infra/terraform/eks/` | EKS root: VPC, EKS, IAM, Karpenter, Argo CD bootstrap |
+| `infra/terraform/ecs/` | ECS root: VPC, cluster, shared ALB, YACE, and the SSM parameters the rendered stacks read |
+| `infra/terraform/persistent/` | Resources that survive teardown (ECR template, CI role, certificate, secrets, the AMP workspace and its rules, the ECS IAM roles) |
 | `infra/terraform/modules/` | One module per foundation layer |
 | `charts/platform/` | Argo CD Applications for platform components, the controller, and the services ApplicationSet and AppProject |
 | `examples/payments-api/` | Sample Go service used to prove the golden path |
@@ -56,10 +62,11 @@ See the [architecture document](docs/architecture.md) for the full design and th
 | `internal/controller/` | Reconciler, renderers and status |
 | `cmd/forge-controller/` | Controller entrypoint |
 | `cmd/forge/` | The `forge` CLI's commands |
-| `internal/config/`, `internal/validate/`, `internal/gitops/`, `internal/status/`, `internal/slo/` | CLI logic: configuration, CRD validation, GitOps pull requests, cluster status, SLO queries |
+| `internal/config/`, `internal/validate/`, `internal/gitops/`, `internal/status/`, `internal/ecsstatus/`, `internal/slo/` | CLI logic: configuration, CRD validation, GitOps pull requests, EKS and ECS status, SLO queries |
+| `internal/render/ecs/` | Renders a ForgeService to a CloudFormation template for ECS |
 | `config/` | Generated CRD (also embedded in the CLI) and RBAC, the controller Deployment and its kustomization, and a sample ForgeService |
 | `policies/kyverno/` | Kyverno admission policies, synced by the `kyverno-policies` Application |
-| `observability/` | SLI recording rules and the Grafana dashboard (synced by the `observability` Application), and the AMP budget rules (uploaded by Terraform) |
+| `observability/` | SLI recording rules and the Grafana dashboard (synced by the `observability` Application), and the AMP rules: budgets, burn rates and the ECS SLI series (uploaded by Terraform) |
 | `docs/` | Architecture, service checklist, contract decisions |
 | `.github/workflows/` | Pull request checks, the shared image build, a deploy workflow per image, and the CLI release |
 
@@ -76,15 +83,16 @@ To run it yourself, replace these values:
 
 | Value | Where |
 |---|---|
-| AWS account ID and state bucket | `infra/terraform/backend.tf`, `infra/terraform/persistent/backend.tf` |
+| AWS account ID and state bucket | `infra/terraform/{eks,ecs,persistent}/backend.tf` |
+| AWS account ID (service control policy) | `infra/terraform/modules/ecs-iam/policies/scp.json`, attached by hand to the account in the Organization's management account |
 | AWS account ID (ECR address) | `config/kustomization.yaml`, the overlays in forge-gitops, `policies/kyverno/registryallowlist.yaml`, `policies/kyverno/signaturecheck.yaml` |
-| Domain (`forgeappservices.com`) | `infra/terraform/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, `policies/kyverno/hostdomain.yaml`, ingress hosts in forge-gitops |
-| GitHub repository URLs | `charts/platform/*.yaml` (`repoURL`), `go.mod`, the signing identity in `policies/kyverno/signaturecheck.yaml` |
+| Domain (`forgeappservices.com`) | `infra/terraform/eks/main.tf`, `infra/terraform/ecs/main.tf`, `infra/terraform/persistent/main.tf`, `infra/terraform/modules/iam/main.tf`, `infra/terraform/eks/makefile`, `infra/terraform/modules/argocd/values/argo.values.yaml`, `charts/platform/external-dns.yaml`, `policies/kyverno/hostdomain.yaml`, ingress hosts in forge-gitops |
+| GitHub repository URLs | `charts/platform/*.yaml` (`repoURL`), `go.mod`, `infra/terraform/ecs/makefile`, the signing identity in `policies/kyverno/signaturecheck.yaml` and in forge-gitops `deploy-ecs.yaml` |
 | Sample service image and host | `config/samples/payments/forgeservice.yaml` |
 | AMP workspace endpoint (created by the persistent root; `terraform output forge_amp_endpoint`) | `charts/platform/kube-prometheus-stack.yaml` (remote write URL and Grafana data source) |
 | Public subnet CIDRs, monitoring namespace | Controller arguments in `config/manager/forge-controller-deployment.yaml` |
-| Terraform variables (admin role ARN, GitHub repository for CI) | copy each `terraform.tfvars.example` to `terraform.tfvars` and fill in |
-| GitHub Actions secrets | `ROLE_ARN`, `DEPLOY_KEY` (write access to this repository), `GITOPS_DEPLOY_KEY` (write access to forge-gitops) |
+| Terraform variables (admin role ARN, GitHub repositories for CI and the ECS deploy role) | copy each `terraform.tfvars.example` to `terraform.tfvars` and fill in |
+| GitHub Actions secrets | `ROLE_ARN`, `DEPLOY_KEY` (write access to this repository), `GITOPS_DEPLOY_KEY` (write access to forge-gitops); in forge-gitops, `ECS_DEPLOY_ROLE_ARN` (`terraform output gitops_deploy_role_arn` in the persistent root) |
 | CLI configuration (GitOps repository, domain, AMP endpoint, region) | Your own `config.yaml`; start from `internal/config/config-example.yaml` |
 
 The region is `us-east-1` throughout; changing it means updating the same files.
@@ -100,35 +108,62 @@ Apply the persistent root once:
     cd infra/terraform/persistent
     terraform init && terraform apply
 
-It must exist before `make up`: the main root looks up its Amazon Managed Service for
-Prometheus workspace, and the plan fails if it is missing. Re-apply it after changing
+It must exist before `make up`: both backend roots look up its Amazon Managed Service
+for Prometheus workspace, and the plan fails if it is missing. Re-apply it after changing
 `observability/amp-rules/`, which it uploads to AMP.
 
-Then build and tear down the platform as needed:
+Then build and tear down each backend as needed. They are independent; either can be up
+without the other:
 
-    cd infra/terraform
+    cd infra/terraform/eks
     make up      # build the cluster; Argo CD installs the rest
     make down    # tear it all down
 
+    cd infra/terraform/ecs
+    make up      # build the foundation, then deploy every ECS service in forge-gitops
+    make down    # delete the service stacks, then the foundation
+
 ## Deploying a service
 
-Argo CD installs the controller, its CRD and RBAC with the rest of the platform. A
-service is a folder in forge-gitops (`eks/services/<name>/{base,dev,prod}`); the
-ApplicationSet creates an Application per environment, named and namespaced
-`<name>-dev` and `<name>-prod`.
+A service is a folder in forge-gitops, `eks/services/<name>/{base,dev,prod}` or
+`ecs/services/<name>/{base,dev,prod}`; the folder picks the backend.
+
+- **EKS.** Argo CD installs the controller, its CRD and RBAC with the rest of the
+  platform. The ApplicationSet creates an Application per environment, named and
+  namespaced `<name>-dev` and `<name>-prod`.
+- **ECS.** forge-gitops' `deploy-ecs.yaml` runs on every push to main. For each changed
+  environment it builds the overlay, verifies the image's signature, renders it with
+  `forge render` and deploys the CloudFormation stack `forge-<name>-<env>`. Deleting an
+  environment folder deletes its stack. With the foundation down the workflow does
+  nothing, and `make up` deploys everything again.
 
 1. **Build first.** The service's own repository calls this repository's reusable
    workflow (`bjburke002/Forge/.github/workflows/build-image.yaml@main`), which scans,
    signs and pushes the image to ECR. Kyverno only admits images signed by that
-   workflow. A new repository must be added to the CI role's trust policy, and needs a
+   workflow, and the ECS pipeline verifies the same signature. A new repository must be added to the CI role's trust policy, and needs a
    write credential for its dev overlay in forge-gitops.
 2. **Register.** Write a ForgeService with the pushed image in `spec.image`, check it
-   with `forge validate`, then run `forge create` to open a pull request adding its
-   `base` and `dev` folders. Merging it brings up `<name>-dev`.
+   with `forge validate`, then run `forge create` (with `--target ecs` for ECS) to open
+   a pull request adding its `base` and `dev` folders. Merging it brings up `<name>-dev`.
 3. **Ship.** From then on, CI writes each new image tag to the dev overlay.
 4. **Promote.** `forge promote <name>` opens a pull request copying dev's image to the
    prod overlay, creating it the first time. Merging it deploys `<name>-prod`. To roll
    back, revert that pull request in GitHub.
+
+**Backend differences.** The contract is the same on both; a few fields behave
+differently on ECS:
+
+| | EKS | ECS |
+|---|---|---|
+| `resources` | Requests and limits per container | Rounded up to a Fargate task size, at least 1 GB |
+| `scaling` target | CPU use of the request | CPU use of the whole task, so the same target scales later |
+| Liveness | The liveness probe restarts the container | Not checked; the ALB readiness check and the deployment circuit breaker cover it |
+| `/tmp` | Writable | Mounted, but not writable by the non-root user |
+| App `/metrics` | Scraped by the in-cluster Prometheus | Not collected |
+| Admission | Kyverno | The pipeline's signature check, and a service control policy that lets only CloudFormation change `forge-*` services |
+| Capacity | Karpenter, Spot first | Fargate Spot for dev; prod keeps one on-demand task |
+
+On both backends the SLI comes from the ALB, so a service without `ingress` has no SLO.
 
 ## The forge CLI
 
@@ -141,15 +176,18 @@ verify it, or build it yourself:
 | Command | Does | Needs |
 |---|---|---|
 | `forge validate <file>` | Checks a ForgeService against the CRD's schema and CEL rules | Nothing: offline |
-| `forge create <file>` | Validates it and opens a pull request adding `eks/services/<name>/base` and `dev` | GitHub token |
+| `forge create <file>` | Validates it and opens a pull request adding `<backend>/services/<name>/base` and `dev` | GitHub token |
 | `forge promote <name>` | Opens a pull request copying dev's image to the prod overlay | GitHub token |
-| `forge status <name>` | Argo CD sync and health, readiness, replicas, image and URL for dev and prod | Cluster access |
+| `forge status <name>` | Sync and health, readiness, replicas, image and URL for dev and prod, on either backend | Cluster access (EKS), AWS credentials (ECS) |
+| `forge render <file> --env dev\|prod` | Renders an ECS service's built overlay to a CloudFormation template; used by the ECS pipeline | Nothing: offline |
 | `forge slo <name>` | 30-day availability, budget left and 1h and 6h burn rates from AMP | AWS credentials |
 | `forge config view` | Prints the resolved configuration | Nothing |
 
 `create` and `promote` take `--dry-run` to print the files instead of opening a pull
-request. `create` takes `--target` (default `eks`); `promote` finds the service's
-backend itself, and a `--target` given to it must match. Only `eks` is supported so far. Every command takes `--config <path>` and `--context <kube context>`.
+request. `create` takes `--target` (`eks` or `ecs`, default `eks`); `promote` finds the
+service's backend itself, and a `--target` given to it must match. `status` asks both
+backends, or one with `--target`; a backend it can't reach is reported and skipped.
+Every command takes `--config <path>` and `--context <kube context>`.
 
 **Configuration.** The CLI reads `~/.config/forge/config.yaml` if it exists, otherwise
 `config.yaml` in a `forge` folder under the operating system's configuration directory,
@@ -199,3 +237,8 @@ etcd. `setup-envtest` downloads those binaries once and prints where they are:
 Without `KUBEBUILDER_ASSETS`, the `internal/controller` package fails at startup,
 because its tests share one envtest environment. The renderer tests need no API server
 and run on their own with `go test ./internal/controller/resources/`.
+
+The ECS renderer's tests compare against golden templates in `internal/render/ecs/testdata/`.
+After a deliberate change, regenerate and review them:
+
+    go test ./internal/render/ecs/ -update
