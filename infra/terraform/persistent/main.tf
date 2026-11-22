@@ -57,8 +57,9 @@ resource "aws_secretsmanager_secret_version" "grafana_admin" {
 module "amp" {
   source = "../modules/amp"
 
-  amp_alias = "forge-amp"
-  slo_rules = file("${path.root}/../../../observability/amp-rules/slo.yaml")
+  amp_alias     = "forge-amp"
+  slo_rules     = file("${path.root}/../../../observability/amp-rules/slo.yaml")
+  ecs_sli_rules = file("${path.root}/../../../observability/amp-rules/ecs-sli.yaml")
 }
 
 module "ecs-iam" {

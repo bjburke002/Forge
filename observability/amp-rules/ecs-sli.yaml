@@ -1,0 +1,37 @@
+groups:
+  - name: forge-ecs-sli
+    interval: 1m
+    rules:
+      - record: forge:requests:rate5m
+        expr: |
+          sum by (namespace, service, backend) (
+            label_replace(
+              label_replace(
+                label_join(
+                  sum_over_time(aws_applicationelb_request_count_sum{tag_Service!=""}[5m]),
+                  "namespace", "-", "tag_Service", "tag_Environment"
+                ),
+                "service", "$1", "tag_Service", "(.+)"
+              ),
+              "backend", "ecs", "", ""
+            )
+          ) / 300
+      # The "or" gives a service with no 5xx a zero series
+      - record: forge:errors:rate5m
+        expr: |
+          (
+            sum by (namespace, service, backend) (
+              label_replace(
+                label_replace(
+                  label_join(
+                    sum_over_time(aws_applicationelb_httpcode_target_5_xx_count_sum{tag_Service!=""}[5m]),
+                    "namespace", "-", "tag_Service", "tag_Environment"
+                  ),
+                  "service", "$1", "tag_Service", "(.+)"
+                ),
+                "backend", "ecs", "", ""
+              )
+            ) / 300
+          )
+          or
+          forge:requests:rate5m{backend="ecs"} * 0
