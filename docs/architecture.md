@@ -2,7 +2,7 @@
 
 *Architecture, Design Decisions, and Build Strategy*
 
-Revision 2.8  ·  November 2026  
+Revision 2.9  ·  November 2026  
 Supersedes Revision 1 (Forge — AWS Developer Platform Architecture)  
 Delivery window: 13 weeks  ·  Cost ceiling: \$50/month
 
@@ -48,10 +48,11 @@ Delivery window: 13 weeks  ·  Cost ceiling: \$50/month
 - [24. Open Questions and Deferred Decisions](#24-open-questions-and-deferred-decisions)
 - [25. Design Principles in Brief](#25-design-principles-in-brief)
 - [26. Build Strategy](#26-build-strategy)
+- [27. Second Backend: ECS on Fargate](#27-second-backend-ecs-on-fargate)
 
 ## 1. Executive Summary
 
-Forge is an internal developer platform that turns a declarative service definition into a standardized, secure, observable production workload on Amazon EKS. A developer describes what their service needs; Forge decides how AWS and Kubernetes deliver it.
+Forge is an internal developer platform that turns a declarative service definition into a standardized, secure, observable production workload on Amazon EKS or, since Revision 2.9, on ECS with Fargate (§27). A developer describes what their service needs; Forge decides how AWS and Kubernetes deliver it.
 
 The platform contract is deliberately independent of cloud-specific implementation detail. Developers write against the Forge Service contract; the platform translates it into AWS and Kubernetes primitives. That indirection is the product — everything else is implementation.
 
@@ -135,11 +136,20 @@ Revision 2.8 (November 2026) records Phase 8, the CLI, and Phase 9, reliability:
 - The controller adds a zone topology spread constraint, so a service's replicas run in different availability zones (§16.1).
 - The full destroy-and-rebuild is exercised every working session. The burn-rate alerts were cut (§18.3, §24).
 
+Revision 2.9 (November 2026) records the second backend, ECS on Fargate (§27):
+
+- The same ForgeService runs on ECS, with no Kubernetes control plane in its path. The folder in forge-gitops (eks/ or ecs/) picks the backend.
+- ECS has its own Terraform root, VPC and shared ALB, torn down nightly like EKS; its IAM roles live in the persistent root.
+- A forge-gitops workflow renders each ECS service with forge render and deploys it as one CloudFormation stack per environment. There is no deploy command, so the design rule holds (§14).
+- The signature check runs in that pipeline, and a service control policy lets only CloudFormation change the services it owns.
+- YACE on ECS feeds the same AMP budget rules, dashboard and forge slo.
+- The Terraform main root moved to infra/terraform/eks (§21).
+
 ## 3. Non-Goals
 
 Stating what Forge is not is the cheapest defense against scope creep. Forge does not attempt:
 
-- Multi-cloud portability. The contract is cloud-independent by design, but only one implementation exists. A second AWS runtime (ECS on Fargate) is recorded as a possible future extension in §24; a second cloud is not planned.
+- Multi-cloud portability. The contract is cloud-independent by design, and it has two AWS implementations, EKS and ECS on Fargate (§27); a second cloud is not planned.
 - Stateful workloads. No databases, no StatefulSets, no storage lifecycle management. Applications consume managed AWS data services.
 - A service mesh. Ingress and NetworkPolicy cover the requirements. mTLS between services is out of scope.
 - Hard multi-tenancy. Namespace isolation and NetworkPolicy assume cooperating internal teams, not hostile tenants.
@@ -565,10 +575,11 @@ The ApplicationSet is the glue Revision 1 left unspecified. A git directory gene
 
 - *Configuration.* One YAML file outside the repository describes the installation, not a service: the GitOps repository and branch, the platform domain, the Argo CD namespace, an optional kube context, and the AMP endpoint and region. It is read from --config, or ~/.config/forge/config.yaml, or the operating system's configuration directory. Flags override FORGE_* environment variables, which override the file, which overrides the defaults.
 - *Validation without a cluster.* The generated CRD is embedded in the binary. validate, and create before it opens anything, check apiVersion, kind and name, prune and report unknown fields, apply the schema's defaults, then run the OpenAPI schema and the CEL rules with the same apiextensions libraries the API server uses. Errors carry field paths, so a misspelled field and the required field it left out are both reported. A server-side dry run against a live cluster is not built.
-- *create.* Takes a finished ForgeService, as the CRD defines it, rather than building one from flags. It writes payments' layout: the CR in base with its image replaced by a placeholder, a kustomizeconfig that makes spec.image an image field, and a dev overlay with the namespace, the real image name and tag, and a patch that sets the host to &lt;name&gt;-dev.&lt;domain&gt;, so dev and prod never claim the same host. A tag is required; digests are rejected. The image must already exist, so a team builds first and then registers. There is no prod folder, so merging brings up dev only. --target picks the backend and defaults to eks; ecs is refused until the ECS backend exists. It refuses if the service already exists under either backend or its branch exists, and --dry-run prints the files instead.
+- *create.* Takes a finished ForgeService, as the CRD defines it, rather than building one from flags. It writes payments' layout: the CR in base with its image replaced by a placeholder, a kustomizeconfig that makes spec.image an image field, and a dev overlay with the namespace, the real image name and tag, and a patch that sets the host to &lt;name&gt;-dev.&lt;domain&gt;, so dev and prod never claim the same host. A tag is required; digests are rejected. The image must already exist, so a team builds first and then registers. There is no prod folder, so merging brings up dev only. --target picks the backend, eks or ecs, and defaults to eks. It refuses if the service already exists under either backend or its branch exists, and --dry-run prints the files instead.
 - *promote.* Reads the dev overlay from the GitOps repository's main branch and copies its image into prod. The first promotion writes a new prod overlay; later ones change only newTag and keep everything else in the file, such as an env patch. If prod already runs that tag, nothing is opened. It finds the service's backend from where its folder is in the GitOps repository; a --target, if given, must match.
 - *Pull requests.* Every change is one commit, made through GitHub's Git Data API without cloning: a tree built on main, a commit, a branch named forge/create-&lt;name&gt; or forge/promote-&lt;name&gt;, and a pull request. The token comes from FORGE_GITHUB_TOKEN, then GITHUB_TOKEN, then gh auth token. There is no token flag, since flags end up in shell history, and the token is never printed or stored in the configuration. A fine-grained token limited to forge-gitops, with read and write access to contents and pull requests, is enough. Pull requests are authored by the person running the CLI.
-- *status.* Reads the Argo Application and the ForgeService for each environment with one dynamic client, so Argo CD's Go module is not a dependency. Besides sync, health, readiness, available replicas, image and URL, it reports a spec the controller has not yet reconciled and the reason behind a Ready or Degraded condition. A missing Application or ForgeService reads as not deployed, not as an error.
+- *status.* Reads the Argo Application and the ForgeService for each environment with one dynamic client, so Argo CD's Go module is not a dependency. Besides sync, health, readiness, available replicas, image and URL, it reports a spec the controller has not yet reconciled and the reason behind a Ready or Degraded condition. A missing Application or ForgeService reads as not deployed, not as an error. For ECS it reads the CloudFormation stack, the ECS service's primary deployment and its task definition (internal/ecsstatus), with AWS credentials. It asks both backends unless --target names one, hides a backend with nothing deployed, reports one it can't reach on stderr, and fails only if neither answers.
+- *render.* Turns a built ECS overlay into a CloudFormation template, offline (§27). It changes nothing itself; the ECS pipeline runs it.
 - *slo.* Signs requests to AMP with SigV4 using the caller's AWS credentials, and runs the same queries as the dashboard's SLO row, so the numbers match it. It needs no cluster: the data lives in AMP.
 
 **Bootstrap details.** Terraform installs Argo CD with the argo-cd Helm chart and creates the root Application with the argocd-apps chart. Argo CD has no ingress and is reached by port-forward, so its UI is only as exposed as the Kubernetes API. Child Applications are ordered with sync waves (below), which requires restoring Argo CD's health check for Application resources. The root Application deliberately has no deletion finalizer: teardown pauses Argo CD before terraform destroy, and a finalizer nobody processes would hang the destroy.
@@ -823,7 +834,8 @@ forge-gitops/
 │           └── prod/
 │               └── kustomization.yaml  # payments-prod: image tag, env
 └── ecs/
-    └── services/                   # reserved for the planned ECS on Fargate backend
+    └── services/
+        └── billing/                # same layout; deployed by deploy-ecs.yaml (§27)
 ```
 
 The base holds production's values, so prod is the one environment defined without overrides. env lives only in the overlays: patches to a custom resource merge lists by replacing them, so an env list split between base and overlay would silently lose entries. The ApplicationSet and AppProject that read this repository live in charts/platform (§14).
@@ -862,15 +874,16 @@ forge/
 │   ├── config/                 # CLI configuration: file, FORGE_* variables, defaults
 │   ├── validate/               # CRD schema and CEL validation for the CLI
 │   ├── gitops/                 # create and promote files, GitHub pull requests
-│   └── status/  slo/           # read-only views: cluster and Argo CD, AMP
+│   ├── render/ecs/             # ForgeService → CloudFormation for ECS
+│   └── status/  ecsstatus/  slo/  # read-only views: Argo CD, ECS, AMP
 ├── config/                     # generated CRD (embedded in the CLI) and RBAC, controller Deployment, sample ForgeService
 ├── infra/terraform/
-│   ├── main.tf  terraform.tf  providers.tf  backend.tf   # main root
-│   ├── makefile                # make up / down / plan / validate
-│   ├── scripts/                # k8s-teardown.sh, check-leftovers.sh
+│   ├── eks/                    # EKS root, makefile (up / down / plan / validate), scripts/
+│   ├── ecs/                    # ECS root, makefile, scripts/ (ecs-teardown.sh, check-leftovers.sh)
 │   ├── persistent/             # what survives teardown
 │   └── modules/                # vpc eks iam karpenter argocd
-│                               #   + ecr github-oidc acm amp (persistent)
+│                               #   + ecs ecs-alb ecs-yace (ECS root)
+│                               #   + ecr github-oidc acm amp ecs-iam (persistent)
 ├── charts/
 │   ├── platform/               # app of apps: one Application per component
 │   ├── karpenter-config/       # NodePool + EC2NodeClass
@@ -995,7 +1008,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | Multi-cluster and DR | Out of scope | Single cluster, single region. Recovery time objective: a full rebuild takes about 30 minutes plus DNS propagation. |
 | Progressive delivery | Out of scope | Argo Rollouts is the obvious next step and the controller is structured so it could render a Rollout instead of a Deployment. |
 | Multi-architecture images | Deferred | The NodePool is restricted to amd64 until CI builds multi-architecture images. Graviton instances would then lower compute cost. |
-| Second runtime: ECS on Fargate | Future | Keep EKS as the control plane; the controller renders AWS Controllers for Kubernetes (ACK) resources for services placed on ECS, so it still only writes Kubernetes objects. Open design question: the shared ALB, which the Load Balancer Controller owns. Estimate 80 to 120 hours for parity, 25 to 35 for a proof of concept behind its own ALB. |
+| Second runtime: ECS on Fargate | Built | Built without EKS in its path, rather than through ACK from the cluster, because the cluster is torn down nightly (§27). |
 | Golden paths for other languages (.NET first) | Future | The contract is language-neutral and must stay so. A second language needs a starter repository template, a CI workflow variant (tests and dependency scanning; build, scan, sign and push stay shared) and a minimal base image. Estimate 10 to 15 hours. |
 | AWS access for services | Decided | Not part of the contract. A service that calls AWS gets an IAM role and Pod Identity association from Terraform, bound to its ServiceAccount (<svc>-sa in its namespace). The controller stays limited to Kubernetes objects (§7), and every AWS permission goes through a reviewed Terraform change. ACK remains an option if self-service AWS access is ever wanted. Built when the first service needs AWS access; the design is in §9. |
 | GitOps repository credential | Resolved | A deploy key with write access on forge-gitops, stored as a secret in this repository (§15). A GitHub App would scale better across many repositories. |
@@ -1011,7 +1024,7 @@ Deferred and open decisions are recorded with their rationale so they can be rev
 | ALB-generated 503s in the SLI | Open | 503s the ALB returns when a service has no healthy targets are counted per load balancer, not per target group, so the SLI misses them (§18.1). Candidate fix: count minutes with no healthy targets as fully bad in the time-based budget. |
 | Monitoring CRDs | Resolved | The CRDs install from a separate prometheus-operator-crds Application at wave 0, version-matched to kube-prometheus-stack and protected from pruning (§14). |
 
-**Future extensions.** The ECS and other-language rows are candidates once the initial delivery is complete, because each proves the contract from a different side: the same Service runs on a second runtime, or the same pipeline builds a second language. Both are cheaper to keep possible than to retrofit, which is why the contract stays free of runtime and language details and the controller already mounts a writable /tmp.
+**Future extensions.** The other-language row proves the contract from a different side: the same pipeline builds a second language. The ECS backend (§27) did the same for runtimes, and the contract needed no changes for it, because it stays free of runtime and language details.
 
 ## 25. Design Principles in Brief
 
@@ -1038,3 +1051,39 @@ The control plane is not built first. The golden path is proven by hand, then th
 > **Why the controller moved from last to fourth.** In Revision 1 the controller was Phase 8 of 9 — the first thing to be cut when time ran short, and the component that defines the platform. Here it is built immediately after the golden path is proven, and the CLI absorbs the schedule risk instead. Without the CLI, Forge is still a Kubernetes-native platform; without the controller, it is a collection of hand-written manifests.
 
 Each step is a legitimate stopping point that leaves a working platform. The platform is usable after step 4 and substantially complete after step 7. That property — delivering value at every stage rather than only at the end — is what makes a 146-hour plan workable inside 130 hours of capacity.
+
+## 27. Second Backend: ECS on Fargate
+
+The same ForgeService runs on ECS with Fargate, with no Kubernetes control plane in its path. The backend is additive: the EKS platform behaves as before, and both backends share the contract, the CLI, forge-gitops, the image pipeline, the domain and certificate, and AMP. A service's folder in forge-gitops, eks/services or ecs/services, picks its backend, and service names stay unique across both, because the SLI series are keyed by namespace and service.
+
+**Why not ACK from EKS.** Earlier revisions planned to keep EKS as the control plane and have the controller render ACK resources for ECS. The cluster is torn down nightly, so ECS services would have had no control plane most of the time. ECS Express Mode was tried and rejected: it generates hostnames, owns its ALB, and a custom domain only works by editing resources Express owns, again after every create.
+
+**Foundation.** infra/terraform/ecs builds a separate VPC (10.30.0.0/16; private task subnets, one NAT gateway, only the ALB in public subnets), the cluster with the FARGATE and FARGATE_SPOT capacity providers, one shared ALB with the wildcard certificate, and YACE. It writes the values stacks need to SSM under /forge/ecs/. The IAM roles live in the persistent root: the task execution role, the forge-gitops deploy role (GitHub OIDC, main branch only) and the CloudFormation service role that does the work. Like EKS, it is torn down nightly: make down deletes every service stack, then destroys the root, then runs a leftover check. make up applies the root and then runs the deploy workflow for every service. Up, it costs about \$0.15 an hour, roughly \$9 a month at 60 hours.
+
+**Rendering.** internal/render/ecs turns a built overlay into one CloudFormation template per service and environment, for the stack forge-&lt;name&gt;-&lt;env&gt;. Platform values are SSM-backed parameters, so rendering is offline and a template holds no account's IDs. It is written as JSON with small local Go types; YAML was rejected because the available encoder sorts keys and can't write intrinsic tags.
+
+| Contract | ECS |
+|---|---|
+| image, runtime.port, env | Task definition with one container: non-root, read-only root filesystem, a /tmp volume, logs to a log group the stack owns |
+| resources | Task size: the smallest Fargate CPU at or above the summed requests, then the smallest memory for that CPU at or above the summed limits, at least 1 GB |
+| scaling | ECS service with the deployment circuit breaker and rollback; Application Auto Scaling target tracking on CPU. Dev runs on Fargate Spot; prod keeps one FARGATE task and puts the rest on Spot |
+| health | The target group's health check on the readiness path |
+| ingress | Target group, a listener rule on the shared ALB matching the host (and the path, when it isn't /), and a Route 53 alias. The rule's priority is an FNV-1a hash of the host, since every rule matches a unique host and only uniqueness matters |
+| owner | Tags, with Project=forge and Backend=ecs on every stack |
+
+Golden templates in internal/render/ecs/testdata pin the output, and both pass cfn-lint.
+
+**Deploying.** There is no forge deploy command: it would change the system without a commit and break the design rule (§14). forge-gitops' deploy-ecs.yaml is the only deploy path. A detect job checks the foundation is up (the /forge/ecs/https-listener-arn parameter exists; if not, it succeeds without deploying) and finds the changed environments from the push's diff: a base change means every environment of that service, and a deleted folder means delete its stack. A matrix job per environment then runs under the deploy role: kustomize build, cosign verify against the same identity Kyverno checks (§16.2), forge render, and aws cloudformation deploy with the service role. A stack a failed first create left in ROLLBACK_COMPLETE is deleted first. CI's image write-back is the same as on EKS, so a merged image tag redeploys the service.
+
+**Guardrails.** Without Kyverno, the signature check runs in the pipeline, before any stack changes. A service control policy on the account denies creating, updating and deleting ECS services named forge-* on the cluster, and changing their scaling, to everyone but the CloudFormation role, so a console change can't drift a stack. It matches by name rather than tag, because Terraform's default tags put Backend=ecs on platform resources too, and a tag can be removed. Names starting with forge- are reserved for rendered services; platform services use others, such as platform-yace.
+
+**Observability.** YACE runs as an ECS service built by Terraform, with an ADOT collector that remote-writes to AMP. It isn't a ForgeService, for the same reason EKS platform components aren't: it needs two containers, a task role and unsigned upstream images. It discovers target groups by tag and exports each stack's Service and Environment tags. An AMP rule group (observability/amp-rules/ecs-sli.yaml) maps them to the namespace and service labels and adds backend="ecs", so the existing budget rules, the dashboard and forge slo work unchanged. App /metrics are not collected: on EKS they stay in the in-cluster Prometheus and only forge:* series reach AMP, so an ADOT sidecar per service would have nothing to feed.
+
+**Differences from EKS.**
+
+- *Autoscaling.* ECS targets CPU use of the whole task, which is at least the request, so the same target scales later than on EKS. Documented rather than converted.
+- *Liveness.* Not checked. A container health check would run a command inside a distroless image with no shell; the ALB readiness check and the circuit breaker cover it.
+- */tmp.* Fargate bind volumes are owned by root, so the non-root container can't write to it. An init container that opens its permissions is the fix if a service needs it.
+- *Admission.* The pipeline's signature check and the service control policy stand in for Kyverno; the Pod requirements have no equivalent, since the renderer sets the security defaults itself.
+
+**Not built.** Per-service AWS access on ECS (a task role per service, the counterpart of §13), a writable /tmp, and an SLI for services without ingress, which neither backend has.
