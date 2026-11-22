@@ -12,6 +12,12 @@ resource "aws_prometheus_rule_group_namespace" "amp" {
   data         = var.slo_rules
 }
 
+resource "aws_prometheus_rule_group_namespace" "ecs" {
+  name         = "${var.amp_alias}-ecs-sli"
+  workspace_id = aws_prometheus_workspace.amp.id
+  data         = var.ecs_sli_rules
+}
+
 resource "aws_cloudwatch_log_group" "amp" {
   name              = "/aws/vendedlogs/prometheus/${var.amp_alias}"
   retention_in_days = 7
