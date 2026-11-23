@@ -46,3 +46,9 @@ resource "aws_ssm_parameter" "ecs_vpc_id" {
   type        = "String"
   value       = module.vpc.vpc_id
 }
+resource "aws_ssm_parameter" "canary_listener_rule_arn" {
+  name        = "/forge/ecs-test-listener-arn"
+  description = "ARN of the ALB listener used for canary tests."
+  type        = "String"
+  value       = module.ecs-alb.canary_listener_arn
+}

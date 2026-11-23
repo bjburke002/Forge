@@ -13,3 +13,7 @@ variable "vpc_subnets" {
 variable "certificate_arn" {
   type = string
 }
+
+variable "nat_public_ip" {
+  type = string
+}

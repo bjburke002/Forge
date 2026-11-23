@@ -30,6 +30,7 @@ module "ecs-alb" {
   vpc_subnets     = module.vpc.public_subnet_ids
   vpc_id          = module.vpc.vpc_id
   certificate_arn = data.aws_acm_certificate.wildcard.arn
+  nat_public_ip   = module.vpc.nat_public_ip
 }
 
 data "aws_prometheus_workspaces" "amp" {
