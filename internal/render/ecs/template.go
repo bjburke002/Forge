@@ -33,7 +33,7 @@ type Resource struct {
 // Outputs define outputs used to display various information by the CLI
 type Output struct {
 	Description string `json:"Description"`
-	Value       string `json:"Value"`
+	Value       any    `json:"Value"`
 }
 
 func ref(name string) map[string]string {
