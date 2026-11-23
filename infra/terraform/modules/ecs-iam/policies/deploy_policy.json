@@ -64,6 +64,12 @@
       "Resource": [
         "arn:aws:ecr:${region}:${account_id}:repository/forge/*"
       ]
+    },
+    {
+      "Sid": "ReadListenerRules",
+      "Effect": "Allow",
+      "Action": "elasticloadbalancing:DescribeRules",
+      "Resource": "*"
     }
   ]
 }

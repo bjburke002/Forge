@@ -1,6 +1,7 @@
 package ecs
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
@@ -175,6 +176,13 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 	}
 
 	if fsvc.Spec.Ingress != nil {
+		// HookDetails needs to be encoded as a JSON object for cloudformation which means it has to be created and marshaled first
+		details, err := json.Marshal(map[string]string{
+			"url": "https://" + fsvc.Spec.Ingress.Host + ":8443" + fsvc.Spec.Health.Readiness,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("hook details: %w", err)
+		}
 
 		canaryConfiguration := &CanaryConfiguration{
 			CanaryPercent:           10.0,
@@ -185,9 +193,7 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 				HookTargetArn:   ref(paramCanaryHookArn),
 				RoleArn:         ref(paramHookInvokeRoleArn),
 				LifecycleStages: []string{"POST_TEST_TRAFFIC_SHIFT"},
-				HookDetails: map[string]string{
-					"url": "https://" + fsvc.Spec.Ingress.Host + ":8443" + fsvc.Spec.Health.Readiness,
-				},
+				HookDetails:     string(details),
 			},
 		}
 

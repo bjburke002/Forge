@@ -471,9 +471,7 @@
               "LifecycleStages": [
                 "POST_TEST_TRAFFIC_SHIFT"
               ],
-              "HookDetails": {
-                "url": "https://payments-dev.forgeappservices.com:8443/health/ready"
-              }
+              "HookDetails": "{\"url\":\"https://payments-dev.forgeappservices.com:8443/health/ready\"}"
             }
           ],
           "Alarms": {
