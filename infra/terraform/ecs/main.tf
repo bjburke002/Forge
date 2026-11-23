@@ -30,6 +30,7 @@ module "ecs-alb" {
   vpc_subnets     = module.vpc.public_subnet_ids
   vpc_id          = module.vpc.vpc_id
   certificate_arn = data.aws_acm_certificate.wildcard.arn
+  nat_public_ip   = module.vpc.nat_public_ip
 }
 
 data "aws_prometheus_workspaces" "amp" {
@@ -48,4 +49,17 @@ module "ecs-yace" {
   cluster_name           = module.ecs.cluster_name
   amp_workspace_arn      = data.aws_prometheus_workspace.amp.arn
   amp_remote_write_url   = "${data.aws_prometheus_workspace.amp.prometheus_endpoint}api/v1/remote_write"
+}
+
+
+data "aws_ssm_parameter" "canary_hook_role_arn" {
+  name = "/forge/shared/ecs-canary-hook-role-arn"
+}
+module "ecs-canary" {
+  source = "../modules/ecs-canary"
+
+  private_subnet_ids        = module.vpc.private_subnet_ids
+  lambda_execution_role_arn = data.aws_ssm_parameter.canary_hook_role_arn.value
+  cluster_name              = local.cluster_name
+  vpc_id                    = module.vpc.vpc_id
 }

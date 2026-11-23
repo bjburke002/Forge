@@ -87,9 +87,92 @@ resource "aws_iam_role_policy" "forge_ecs_cloudformation_policy" {
   role = aws_iam_role.forge_ecs_cloudformation_role.id
 
   policy = templatefile("${path.module}/policies/cloudformation_policy.json", {
-    account_id         = data.aws_caller_identity.current.account_id
-    region             = data.aws_region.current.region
-    hosted_zone_id     = var.hosted_zone_id
-    execution_role_arn = aws_iam_role.task_execution_role.arn
+    account_id                  = data.aws_caller_identity.current.account_id
+    region                      = data.aws_region.current.region
+    hosted_zone_id              = var.hosted_zone_id
+    execution_role_arn          = aws_iam_role.task_execution_role.arn
+    ecs_infrastructure_role_arn = aws_iam_role.ecs_infrastructure_role.arn
+    hook_invoke_role_arn        = aws_iam_role.hook_invoke_role.arn
   })
+}
+
+resource "aws_iam_role" "ecs_infrastructure_role" {
+  name = "${var.cluster_name}-ecs-infrastructure-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole"
+        ],
+        Effect = "Allow",
+        Principal = {
+          Service = "ecs.amazonaws.com"
+        }
+      }
+    ]
+
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecs_infrastructure_role" {
+  role       = aws_iam_role.ecs_infrastructure_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForLoadBalancers"
+}
+
+resource "aws_iam_role" "hook_invoke_role" {
+  name = "${var.cluster_name}-ecs-hook-invoke-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole",
+        ],
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "hook_invoke" {
+  name = "${var.cluster_name}-ecs-hook-invoke-policy"
+  role = aws_iam_role.hook_invoke_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = "arn:aws:lambda:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:function:forge-ecs-canary-hook"
+    }]
+  })
+}
+
+resource "aws_iam_role" "lambda_execution_role" {
+  name = "${var.cluster_name}-ecs-lambda-execution-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = [
+          "sts:AssumeRole"
+        ],
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_execution_role" {
+  role       = aws_iam_role.lambda_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
 }
