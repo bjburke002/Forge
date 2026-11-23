@@ -215,7 +215,7 @@ func TestServiceCanary(t *testing.T) {
 				HookTargetArn:   ref(paramCanaryHookArn),
 				RoleArn:         ref(paramHookInvokeRoleArn),
 				LifecycleStages: []string{"POST_TEST_TRAFFIC_SHIFT"},
-				HookDetails:     map[string]string{"url": "https://" + testHost + ":8443/health/ready"},
+				HookDetails:     `{"url":"https://` + testHost + `:8443/health/ready"}`,
 			}}
 			if !reflect.DeepEqual(d.LifecycleHooks, wantHook) {
 				t.Errorf("hooks = %+v", d.LifecycleHooks)
