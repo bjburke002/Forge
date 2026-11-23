@@ -51,8 +51,30 @@ type DeploymentConfiguration struct {
 	MinimumHealthyPercent    int                      `json:"MinimumHealthyPercent"`
 	MaximumPercent           int                      `json:"MaximumPercent"`
 	DeploymentCircuitBreaker DeploymentCircuitBreaker `json:"DeploymentCircuitBreaker"`
+	Strategy                 string                   `json:"Strategy,omitempty"`
+	BakeTimeInMinutes        int                      `json:"BakeTimeInMinutes,omitempty"`
+	CanaryConfiguration      *CanaryConfiguration     `json:"CanaryConfiguration,omitempty"`
+	LifecycleHooks           []LifecycleHook          `json:"LifecycleHooks,omitempty"`
+	Alarms                   *DeploymentAlarms        `json:"Alarms,omitempty"`
 }
 
+type DeploymentAlarms struct {
+	AlarmNames []any `json:"AlarmNames"`
+	Enable     bool  `json:"Enable"`
+	Rollback   bool  `json:"Rollback"`
+}
+
+type CanaryConfiguration struct {
+	CanaryPercent           float64 `json:"CanaryPercent"`
+	CanaryBakeTimeInMinutes int     `json:"CanaryBakeTimeInMinutes"`
+}
+
+type LifecycleHook struct {
+	HookTargetArn   any      `json:"HookTargetArn"`
+	RoleArn         any      `json:"RoleArn"`
+	LifecycleStages []string `json:"LifecycleStages"`
+	HookDetails     any      `json:"HookDetails"`
+}
 type DeploymentCircuitBreaker struct {
 	Enable   bool `json:"Enable"`
 	Rollback bool `json:"Rollback"`
@@ -114,7 +136,18 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 			ContainerName:  fsvc.Name,
 			ContainerPort:  fsvc.Spec.Runtime.Port,
 			TargetGroupArn: ref(targetGroupId),
+			AdvancedConfiguration: &AdvancedConfiguration{
+				AlternateTargetGroupArn: ref(alternateTargetGroupId),
+				ProductionListenerRule:  ref(listenerRuleId),
+				TestListenerRule:        ref(testListenerRuleId),
+				RoleArn:                 ref(paramInfrastructureRoleArn),
+			},
 		},
+	}
+
+	canaryBake, finalBake := 5, 5
+	if envName == "dev" {
+		canaryBake, finalBake = 1, 1
 	}
 
 	serviceProperties := ServiceProperties{
@@ -142,7 +175,32 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 	}
 
 	if fsvc.Spec.Ingress != nil {
+
+		canaryConfiguration := &CanaryConfiguration{
+			CanaryPercent:           10.0,
+			CanaryBakeTimeInMinutes: canaryBake,
+		}
+		lifecycleHooks := []LifecycleHook{
+			{
+				HookTargetArn:   ref(paramCanaryHookArn),
+				RoleArn:         ref(paramHookInvokeRoleArn),
+				LifecycleStages: []string{"POST_TEST_TRAFFIC_SHIFT"},
+				HookDetails: map[string]string{
+					"url": "https://" + fsvc.Spec.Ingress.Host + ":8443" + fsvc.Spec.Health.Readiness,
+				},
+			},
+		}
+
 		serviceProperties.LoadBalancers = loadBalancers
+		serviceProperties.DeploymentConfiguration.Alarms = &DeploymentAlarms{
+			AlarmNames: []any{ref(alarmId)},
+			Enable:     true,
+			Rollback:   true,
+		}
+		serviceProperties.DeploymentConfiguration.Strategy = "CANARY"
+		serviceProperties.DeploymentConfiguration.BakeTimeInMinutes = finalBake
+		serviceProperties.DeploymentConfiguration.CanaryConfiguration = canaryConfiguration
+		serviceProperties.DeploymentConfiguration.LifecycleHooks = lifecycleHooks
 		serviceProperties.HealthCheckGracePeriodSeconds = healthCheckGracePeriodSeconds
 	}
 
@@ -174,11 +232,6 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 	service := Resource{
 		Type:       "AWS::ECS::Service",
 		Properties: serviceProperties,
-	}
-
-	if fsvc.Spec.Ingress != nil {
-		// ECS rejects a target group that isn't attached to a listener yet
-		service.DependsOn = []string{listenerRuleId}
 	}
 
 	scalableTarget := Resource{

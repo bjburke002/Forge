@@ -8,6 +8,8 @@ import (
 	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
 )
 
+const useAlternateTargetGroup = "UseAlternateTargetGroup"
+
 func Render(fsvc *v1alpha1.ForgeService, envName string) (*Template, error) {
 	if envName != "dev" && envName != "prod" {
 		return nil, fmt.Errorf("currently only dev or prod is accepted, received: %q", envName)
@@ -38,18 +40,27 @@ func Render(fsvc *v1alpha1.ForgeService, envName string) (*Template, error) {
 		}
 	}
 
+	params := platformParameters()
+	conditions := map[string]any{}
 	outputs := map[string]Output{}
 	if fsvc.Spec.Ingress != nil {
 		outputs["URL"] = Output{
 			Value:       "https://" + fsvc.Spec.Ingress.Host + fsvc.Spec.Ingress.Path,
 			Description: "ForgeService Domain name",
 		}
+
+		for id, p := range canaryParameters() {
+			params[id] = p
+		}
+
+		conditions[useAlternateTargetGroup] = equals(ref(paramActiveTargetGroup), "alternate")
 	}
 
 	return &Template{
 		AWSTemplateFormatVersion: "2010-09-09",
 		Description:              "Forge service " + ResourceName(fsvc.Name, envName),
-		Parameters:               platformParameters(),
+		Parameters:               params,
+		Conditions:               conditions,
 		Resources:                resources,
 		Outputs:                  outputs,
 	}, nil

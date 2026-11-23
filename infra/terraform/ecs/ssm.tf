@@ -59,3 +59,10 @@ resource "aws_ssm_parameter" "lambda_function_arn" {
   type        = "String"
   value       = module.ecs-canary.lambda_function_arn
 }
+
+resource "aws_ssm_parameter" "alb_full_name" {
+  name        = "/forge/ecs/alb-full-name"
+  description = "Full ARN suffix of the ALB"
+  type        = "String"
+  value       = module.ecs-alb.alb_full_name
+}

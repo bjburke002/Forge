@@ -5,15 +5,17 @@ type Template struct {
 	AWSTemplateFormatVersion string               `json:"AWSTemplateFormatVersion"`
 	Description              string               `json:"Description,omitempty"`
 	Parameters               map[string]Parameter `json:"Parameters"`
+	Conditions               map[string]any       `json:"Conditions,omitempty"`
 	Resources                map[string]Resource  `json:"Resources"`
 	Outputs                  map[string]Output    `json:"Outputs,omitempty"`
 }
 
 // Parameter defines the params used in Template. These are built in params.go
 type Parameter struct {
-	Type        string `json:"Type"`
-	Description string `json:"Description,omitempty"`
-	Default     string `json:"Default"`
+	Type          string   `json:"Type"`
+	Description   string   `json:"Description,omitempty"`
+	Default       string   `json:"Default"`
+	AllowedValues []string `json:"AllowedValues,omitempty"`
 }
 
 type Tag struct {
@@ -69,4 +71,13 @@ func serviceTags(name, environment, owner string) []Tag {
 			Value: owner,
 		},
 	}
+}
+
+// Conditions helpers
+func equals(a, b any) map[string]any {
+	return map[string]any{"Fn::Equals": []any{a, b}}
+}
+
+func ifThen(cond string, yes, no any) map[string]any {
+	return map[string]any{"Fn::If": []any{cond, yes, no}}
 }

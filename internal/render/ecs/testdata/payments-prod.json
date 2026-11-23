@@ -7,10 +7,29 @@
       "Description": "DNS Name for the ALB",
       "Default": "/forge/ecs/alb-dns-name"
     },
+    "ALBFullName": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "Full ARN suffix of the ALB",
+      "Default": "/forge/ecs/alb-full-name"
+    },
     "ALBZoneId": {
       "Type": "AWS::SSM::Parameter::Value<String>",
       "Description": "Route53 Zone ID for ECS ALB",
       "Default": "/forge/ecs/alb-zone-id"
+    },
+    "ActiveTargetGroup": {
+      "Type": "String",
+      "Description": "Target group that production currently forwards to",
+      "Default": "primary",
+      "AllowedValues": [
+        "primary",
+        "alternate"
+      ]
+    },
+    "CanaryHookArn": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "Canary Hook ARN",
+      "Default": "/forge/ecs/canary-hook-arn"
     },
     "ClusterName": {
       "Type": "AWS::SSM::Parameter::Value<String>",
@@ -27,10 +46,20 @@
       "Description": "ECS ALB HTTPS Listener ARN",
       "Default": "/forge/ecs/https-listener-arn"
     },
+    "HookInvokeRoleArn": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "The ARN of the Hook Invoke ARN used to invoke Lambda",
+      "Default": "/forge/shared/ecs-hook-invoke-role-arn"
+    },
     "HostedZoneId": {
       "Type": "AWS::SSM::Parameter::Value<AWS::Route53::HostedZone::Id>",
       "Description": "Route53 Hosted Zone for forgeappservices.com",
       "Default": "/forge/shared/hosted-zone-id"
+    },
+    "InfrastructureRoleArn": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "The ARN of the ECS Infrastructure Role",
+      "Default": "/forge/shared/ecs-infrastructure-role-arn"
     },
     "PrivateSubnetIds": {
       "Type": "AWS::SSM::Parameter::Value<List<AWS::EC2::Subnet::Id>>",
@@ -42,13 +71,215 @@
       "Description": "ID for the ECS Task Security Group",
       "Default": "/forge/ecs/task-security-group-id"
     },
+    "TestListenerArn": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "The ARN of the canary test listener",
+      "Default": "/forge/ecs/test-listener-arn"
+    },
     "VPCId": {
       "Type": "AWS::SSM::Parameter::Value<AWS::EC2::VPC::Id>",
       "Description": "The VPC ID of the ECS VPC",
       "Default": "/forge/ecs/vpc-id"
     }
   },
+  "Conditions": {
+    "UseAlternateTargetGroup": {
+      "Fn::Equals": [
+        {
+          "Ref": "ActiveTargetGroup"
+        },
+        "alternate"
+      ]
+    }
+  },
   "Resources": {
+    "AlternateTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Port": 8080,
+        "Protocol": "HTTP",
+        "TargetType": "ip",
+        "VpcId": {
+          "Ref": "VPCId"
+        },
+        "HealthCheckPath": "/health/ready",
+        "HealthCheckProtocol": "HTTP",
+        "TargetGroupAttributes": [
+          {
+            "Key": "deregistration_delay.timeout_seconds",
+            "Value": "30"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Project",
+            "Value": "forge"
+          },
+          {
+            "Key": "Backend",
+            "Value": "ecs"
+          },
+          {
+            "Key": "Service",
+            "Value": "payments"
+          },
+          {
+            "Key": "Environment",
+            "Value": "prod"
+          },
+          {
+            "Key": "Owner",
+            "Value": "payments-team"
+          }
+        ]
+      }
+    },
+    "ErrorRateAlarm": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "AlarmName": "forge-payments-prod-5xx",
+        "AlarmDescription": "Rolls back a deployment of forge-payments-prod on a high 5xx ratio",
+        "ComparisonOperator": "GreaterThanThreshold",
+        "Threshold": 5,
+        "EvaluationPeriods": 3,
+        "DatapointsToAlarm": 2,
+        "TreatMissingData": "notBreaching",
+        "Metrics": [
+          {
+            "Id": "e1",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ApplicationELB",
+                "MetricName": "HTTPCode_Target_5XX_Count",
+                "Dimensions": [
+                  {
+                    "Name": "LoadBalancer",
+                    "Value": {
+                      "Ref": "ALBFullName"
+                    }
+                  },
+                  {
+                    "Name": "TargetGroup",
+                    "Value": {
+                      "Fn::GetAtt": [
+                        "TargetGroup",
+                        "TargetGroupFullName"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
+            "Id": "e2",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ApplicationELB",
+                "MetricName": "HTTPCode_Target_5XX_Count",
+                "Dimensions": [
+                  {
+                    "Name": "LoadBalancer",
+                    "Value": {
+                      "Ref": "ALBFullName"
+                    }
+                  },
+                  {
+                    "Name": "TargetGroup",
+                    "Value": {
+                      "Fn::GetAtt": [
+                        "AlternateTargetGroup",
+                        "TargetGroupFullName"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
+            "Id": "r1",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ApplicationELB",
+                "MetricName": "RequestCount",
+                "Dimensions": [
+                  {
+                    "Name": "LoadBalancer",
+                    "Value": {
+                      "Ref": "ALBFullName"
+                    }
+                  },
+                  {
+                    "Name": "TargetGroup",
+                    "Value": {
+                      "Fn::GetAtt": [
+                        "TargetGroup",
+                        "TargetGroupFullName"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
+            "Id": "r2",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ApplicationELB",
+                "MetricName": "RequestCount",
+                "Dimensions": [
+                  {
+                    "Name": "LoadBalancer",
+                    "Value": {
+                      "Ref": "ALBFullName"
+                    }
+                  },
+                  {
+                    "Name": "TargetGroup",
+                    "Value": {
+                      "Fn::GetAtt": [
+                        "AlternateTargetGroup",
+                        "TargetGroupFullName"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
+            "Id": "errors",
+            "Expression": "FILL(e1, 0) + FILL(e2, 0)",
+            "ReturnData": false
+          },
+          {
+            "Id": "requests",
+            "Expression": "FILL(r1, 0) + FILL(r2, 0)",
+            "ReturnData": false
+          },
+          {
+            "Id": "ratio",
+            "Expression": "IF(requests >= 20, 100 * errors / requests, 0)",
+            "Label": "5xx %",
+            "ReturnData": true
+          }
+        ]
+      }
+    },
     "ListenerRule": {
       "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
       "Properties": {
@@ -70,7 +301,15 @@
           {
             "Type": "forward",
             "TargetGroupArn": {
-              "Ref": "TargetGroup"
+              "Fn::If": [
+                "UseAlternateTargetGroup",
+                {
+                  "Ref": "AlternateTargetGroup"
+                },
+                {
+                  "Ref": "TargetGroup"
+                }
+              ]
             }
           }
         ]
@@ -195,6 +434,20 @@
             "ContainerPort": 8080,
             "TargetGroupArn": {
               "Ref": "TargetGroup"
+            },
+            "AdvancedConfiguration": {
+              "AlternateTargetGroupArn": {
+                "Ref": "AlternateTargetGroup"
+              },
+              "ProductionListenerRule": {
+                "Ref": "ListenerRule"
+              },
+              "TestListenerRule": {
+                "Ref": "TestListenerRule"
+              },
+              "RoleArn": {
+                "Ref": "InfrastructureRoleArn"
+              }
             }
           }
         ],
@@ -203,6 +456,37 @@
           "MinimumHealthyPercent": 100,
           "MaximumPercent": 200,
           "DeploymentCircuitBreaker": {
+            "Enable": true,
+            "Rollback": true
+          },
+          "Strategy": "CANARY",
+          "BakeTimeInMinutes": 5,
+          "CanaryConfiguration": {
+            "CanaryPercent": 10,
+            "CanaryBakeTimeInMinutes": 5
+          },
+          "LifecycleHooks": [
+            {
+              "HookTargetArn": {
+                "Ref": "CanaryHookArn"
+              },
+              "RoleArn": {
+                "Ref": "HookInvokeRoleArn"
+              },
+              "LifecycleStages": [
+                "POST_TEST_TRAFFIC_SHIFT"
+              ],
+              "HookDetails": {
+                "url": "https://payments.forgeappservices.com:8443/health/ready"
+              }
+            }
+          ],
+          "Alarms": {
+            "AlarmNames": [
+              {
+                "Ref": "ErrorRateAlarm"
+              }
+            ],
             "Enable": true,
             "Rollback": true
           }
@@ -230,10 +514,7 @@
             "Value": "payments-team"
           }
         ]
-      },
-      "DependsOn": [
-        "ListenerRule"
-      ]
+      }
     },
     "TargetGroup": {
       "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
@@ -349,6 +630,41 @@
           {
             "Key": "Owner",
             "Value": "payments-team"
+          }
+        ]
+      }
+    },
+    "TestListenerRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "ListenerArn": {
+          "Ref": "TestListenerArn"
+        },
+        "Priority": 41702,
+        "Conditions": [
+          {
+            "Field": "host-header",
+            "HostHeaderConfig": {
+              "Values": [
+                "payments.forgeappservices.com"
+              ]
+            }
+          }
+        ],
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": {
+              "Fn::If": [
+                "UseAlternateTargetGroup",
+                {
+                  "Ref": "AlternateTargetGroup"
+                },
+                {
+                  "Ref": "TargetGroup"
+                }
+              ]
+            }
           }
         ]
       }
