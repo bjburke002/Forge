@@ -81,7 +81,9 @@
         "application-autoscaling:DescribeScalableTargets",
         "application-autoscaling:PutScalingPolicy",
         "application-autoscaling:DeleteScalingPolicy",
-        "application-autoscaling:DescribeScalingPolicies"
+        "application-autoscaling:DescribeScalingPolicies",
+        "application-autoscaling:DescribeScheduledActions",
+        "application-autoscaling:TagResource"
       ],
       "Resource": "*"
     },
@@ -124,6 +126,16 @@
         "arn:aws:ssm:${region}:${account_id}:parameter/forge/ecs/*",
         "arn:aws:ssm:${region}:${account_id}:parameter/forge/shared/*"
       ]
+    },
+    {
+      "Sid": "ReadECSServiceDeployments",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:ListServiceDeployments",
+        "ecs:DescribeServiceDeployments",
+        "ecs:DescribeServiceRevisions"
+      ],
+      "Resource": "*"
     }
   ]
 }
