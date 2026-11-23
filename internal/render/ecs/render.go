@@ -49,6 +49,16 @@ func Render(fsvc *v1alpha1.ForgeService, envName string) (*Template, error) {
 			Description: "ForgeService Domain name",
 		}
 
+		outputs["ListenerRuleArn"] = Output{
+			Value:       ref(listenerRuleId),
+			Description: "ARN of the Listener Rule",
+		}
+
+		outputs["AlternateTargetGroupArn"] = Output{
+			Value:       ref(alternateTargetGroupId),
+			Description: "ARN of the Canary target group",
+		}
+
 		for id, p := range canaryParameters() {
 			params[id] = p
 		}

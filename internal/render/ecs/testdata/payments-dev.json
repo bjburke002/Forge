@@ -666,6 +666,18 @@
     }
   },
   "Outputs": {
+    "AlternateTargetGroupArn": {
+      "Description": "ARN of the Canary target group",
+      "Value": {
+        "Ref": "AlternateTargetGroup"
+      }
+    },
+    "ListenerRuleArn": {
+      "Description": "ARN of the Listener Rule",
+      "Value": {
+        "Ref": "ListenerRule"
+      }
+    },
     "URL": {
       "Description": "ForgeService Domain name",
       "Value": "https://payments-dev.forgeappservices.com/"
