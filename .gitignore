@@ -79,3 +79,5 @@ Forge_Architecture_v2.docx
 infra/terraform/boostrap/tfstate-access.json
 Forge_Project_Plan.xlsx
 ~$rge_Architecture_v2.docx
+infra/terraform/modules/ecs-canary/build/
+__pycache__/
