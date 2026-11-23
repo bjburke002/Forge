@@ -8,9 +8,11 @@ import (
 )
 
 const (
-	targetGroupId  = "TargetGroup"
-	listenerRuleId = "ListenerRule"
-	recordSetId    = "RecordSet"
+	targetGroupId          = "TargetGroup"
+	alternateTargetGroupId = "AlternateTargetGroup"
+	listenerRuleId         = "ListenerRule"
+	testListenerRuleId     = "TestListenerRule"
+	recordSetId            = "RecordSet"
 )
 
 // ALB's maximum Priority limit for rules
@@ -72,9 +74,17 @@ type AliasTarget struct {
 }
 
 type LoadBalancer struct {
-	ContainerName  string `json:"ContainerName"`
-	ContainerPort  int32  `json:"ContainerPort"`
-	TargetGroupArn any    `json:"TargetGroupArn"`
+	ContainerName         string                 `json:"ContainerName"`
+	ContainerPort         int32                  `json:"ContainerPort"`
+	TargetGroupArn        any                    `json:"TargetGroupArn"`
+	AdvancedConfiguration *AdvancedConfiguration `json:"AdvancedConfiguration,omitempty"`
+}
+
+type AdvancedConfiguration struct {
+	AlternateTargetGroupArn any `json:"AlternateTargetGroupArn"`
+	ProductionListenerRule  any `json:"ProductionListenerRule"`
+	TestListenerRule        any `json:"TestListenerRule"`
+	RoleArn                 any `json:"RoleArn"`
 }
 
 func rulePriority(host string) int {
@@ -112,12 +122,11 @@ func ingress(fsvc *v1alpha1.ForgeService, envName string) (map[string]Resource, 
 		Tags: serviceTags(fsvc.Name, envName, fsvc.Spec.Owner),
 	}
 
-	conditions := []RuleCondition{
-		{
-			Field:            "host-header",
-			HostHeaderConfig: &HostHeaderConfig{Values: []string{host}},
-		},
+	hostCondition := RuleCondition{
+		Field:            "host-header",
+		HostHeaderConfig: &HostHeaderConfig{Values: []string{host}},
 	}
+	conditions := []RuleCondition{hostCondition}
 
 	if path := strings.TrimSuffix(fsvc.Spec.Ingress.Path, "/"); path != "" {
 		conditions = append(conditions, RuleCondition{
@@ -135,10 +144,14 @@ func ingress(fsvc *v1alpha1.ForgeService, envName string) (map[string]Resource, 
 		Actions: []RuleAction{
 			{
 				Type:           "forward",
-				TargetGroupArn: ref(targetGroupId),
+				TargetGroupArn: ifThen(useAlternateTargetGroup, ref(alternateTargetGroupId), ref(targetGroupId)),
 			},
 		},
 	}
+
+	testListenerRuleProps := listenerRuleProps
+	testListenerRuleProps.ListenerArn = ref(paramTestListenerArn)
+	testListenerRuleProps.Conditions = []RuleCondition{hostCondition}
 
 	recordSetProps := RecordSetProperties{
 		HostedZoneId: ref(paramHostedZoneId),
@@ -156,9 +169,19 @@ func ingress(fsvc *v1alpha1.ForgeService, envName string) (map[string]Resource, 
 		Properties: targetGroupProps,
 	}
 
+	alternateTargetGroup := Resource{
+		Type:       "AWS::ElasticLoadBalancingV2::TargetGroup",
+		Properties: targetGroupProps,
+	}
+
 	listenerRule := Resource{
 		Type:       "AWS::ElasticLoadBalancingV2::ListenerRule",
 		Properties: listenerRuleProps,
+	}
+
+	testListenerRule := Resource{
+		Type:       "AWS::ElasticLoadBalancingV2::ListenerRule",
+		Properties: testListenerRuleProps,
 	}
 
 	recordSet := Resource{
@@ -166,9 +189,14 @@ func ingress(fsvc *v1alpha1.ForgeService, envName string) (map[string]Resource, 
 		Properties: recordSetProps,
 	}
 
-	return map[string]Resource{
-		targetGroupId:  targetGroup,
-		listenerRuleId: listenerRule,
-		recordSetId:    recordSet,
-	}, nil
+	results := map[string]Resource{
+		targetGroupId:          targetGroup,
+		listenerRuleId:         listenerRule,
+		alternateTargetGroupId: alternateTargetGroup,
+		testListenerRuleId:     testListenerRule,
+		recordSetId:            recordSet,
+		alarmId:                errorRateAlarm(fsvc, envName),
+	}
+
+	return results, nil
 }

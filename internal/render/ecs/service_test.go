@@ -158,23 +158,72 @@ func TestServiceTargetCPU(t *testing.T) {
 }
 
 func TestServiceLoadBalancer(t *testing.T) {
-	// With ingress: attached to the target group, and created after the listener rule.
+	// With ingress: attached to the target group, with both rules and the alternate target group for canaries.
+	// No DependsOn: the Refs in AdvancedConfiguration order it after the rules.
 	res, err := serviceDefinition(withIngress(testHost, "/"), "dev")
 	if err != nil {
 		t.Fatalf("serviceDefinition: %v", err)
 	}
 	s := res[serviceId].Properties.(ServiceProperties)
-	wantLB := []LoadBalancer{{ContainerName: "payments", ContainerPort: 8080, TargetGroupArn: ref(targetGroupId)}}
+	wantLB := []LoadBalancer{{
+		ContainerName:  "payments",
+		ContainerPort:  8080,
+		TargetGroupArn: ref(targetGroupId),
+		AdvancedConfiguration: &AdvancedConfiguration{
+			AlternateTargetGroupArn: ref(alternateTargetGroupId),
+			ProductionListenerRule:  ref(listenerRuleId),
+			TestListenerRule:        ref(testListenerRuleId),
+			RoleArn:                 ref(paramInfrastructureRoleArn),
+		},
+	}}
 	if !reflect.DeepEqual(s.LoadBalancers, wantLB) || s.HealthCheckGracePeriodSeconds != healthCheckGracePeriodSeconds {
 		t.Errorf("load balancers %+v, grace period %d", s.LoadBalancers, s.HealthCheckGracePeriodSeconds)
 	}
-	if !reflect.DeepEqual(res[serviceId].DependsOn, []string{listenerRuleId}) {
-		t.Errorf("DependsOn = %v, want [%s]", res[serviceId].DependsOn, listenerRuleId)
+	if res[serviceId].DependsOn != nil {
+		t.Errorf("DependsOn = %v, want none", res[serviceId].DependsOn)
 	}
 
-	// Without ingress: none of the above.
+	// Without ingress: none of the above, and a rolling deployment.
 	r := renderService(t, testService(), "dev")
-	if r.service.LoadBalancers != nil || r.service.HealthCheckGracePeriodSeconds != 0 {
-		t.Errorf("worker service has load balancer settings: %+v", r.service)
+	d := r.service.DeploymentConfiguration
+	if r.service.LoadBalancers != nil || r.service.HealthCheckGracePeriodSeconds != 0 ||
+		d.Strategy != "" || d.CanaryConfiguration != nil || d.LifecycleHooks != nil || d.Alarms != nil {
+		t.Errorf("worker service has load balancer or canary settings: %+v", r.service)
+	}
+}
+
+func TestServiceCanary(t *testing.T) {
+	tests := []struct {
+		env                   string
+		canaryBake, finalBake int
+	}{
+		{env: "dev", canaryBake: 1, finalBake: 1},
+		{env: "prod", canaryBake: 5, finalBake: 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.env, func(t *testing.T) {
+			d := renderService(t, withIngress(testHost, "/api"), tt.env).service.DeploymentConfiguration
+
+			// Same deployment pattern in every environment; only the bake times differ.
+			if d.Strategy != "CANARY" || d.BakeTimeInMinutes != tt.finalBake ||
+				!reflect.DeepEqual(d.CanaryConfiguration, &CanaryConfiguration{CanaryPercent: 10, CanaryBakeTimeInMinutes: tt.canaryBake}) {
+				t.Errorf("strategy %q, bake %d, canary %+v", d.Strategy, d.BakeTimeInMinutes, d.CanaryConfiguration)
+			}
+
+			// The smoke test hits the readiness path on the test listener, whatever ingress.path is.
+			wantHook := []LifecycleHook{{
+				HookTargetArn:   ref(paramCanaryHookArn),
+				RoleArn:         ref(paramHookInvokeRoleArn),
+				LifecycleStages: []string{"POST_TEST_TRAFFIC_SHIFT"},
+				HookDetails:     map[string]string{"url": "https://" + testHost + ":8443/health/ready"},
+			}}
+			if !reflect.DeepEqual(d.LifecycleHooks, wantHook) {
+				t.Errorf("hooks = %+v", d.LifecycleHooks)
+			}
+
+			if !reflect.DeepEqual(d.Alarms, &DeploymentAlarms{AlarmNames: []any{ref(alarmId)}, Enable: true, Rollback: true}) {
+				t.Errorf("alarms = %+v", d.Alarms)
+			}
+		})
 	}
 }

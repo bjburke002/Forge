@@ -16,3 +16,7 @@ output "alb_hosted_zone_id" {
 output "task_security_group_id" {
   value = aws_security_group.task.id
 }
+
+output "alb_full_name" {
+  value = aws_lb.this.arn_suffix
+}

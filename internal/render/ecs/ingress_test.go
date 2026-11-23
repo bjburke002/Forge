@@ -23,9 +23,12 @@ func renderIngress(t *testing.T, fsvc *v1alpha1.ForgeService) (TargetGroupProper
 		t.Fatalf("ingress: %v", err)
 	}
 	want := map[string]string{
-		targetGroupId:  "AWS::ElasticLoadBalancingV2::TargetGroup",
-		listenerRuleId: "AWS::ElasticLoadBalancingV2::ListenerRule",
-		recordSetId:    "AWS::Route53::RecordSet",
+		targetGroupId:          "AWS::ElasticLoadBalancingV2::TargetGroup",
+		alternateTargetGroupId: "AWS::ElasticLoadBalancingV2::TargetGroup",
+		listenerRuleId:         "AWS::ElasticLoadBalancingV2::ListenerRule",
+		testListenerRuleId:     "AWS::ElasticLoadBalancingV2::ListenerRule",
+		recordSetId:            "AWS::Route53::RecordSet",
+		alarmId:                "AWS::CloudWatch::Alarm",
 	}
 	if len(res) != len(want) {
 		t.Fatalf("got %d resources, want %d", len(res), len(want))
@@ -77,8 +80,8 @@ func TestIngress(t *testing.T) {
 	if !reflect.DeepEqual(rule.Conditions, wantCond) {
 		t.Errorf("conditions = %+v, want host only", rule.Conditions)
 	}
-	if !reflect.DeepEqual(rule.Actions, []RuleAction{{Type: "forward", TargetGroupArn: ref(targetGroupId)}}) {
-		t.Errorf("actions = %+v", rule.Actions)
+	if !reflect.DeepEqual(rule.Actions, []RuleAction{{Type: "forward", TargetGroupArn: liveTargetGroup()}}) {
+		t.Errorf("actions = %+v, want forward to the live target group", rule.Actions)
 	}
 
 	// The record lives in our zone; the alias points at the ALB's zone.
@@ -114,6 +117,44 @@ func TestIngressPath(t *testing.T) {
 				t.Errorf("path pattern = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// The target group production is live on, as the pipeline passes it in (decision 30).
+func liveTargetGroup() any {
+	return ifThen(useAlternateTargetGroup, ref(alternateTargetGroupId), ref(targetGroupId))
+}
+
+func TestIngressCanary(t *testing.T) {
+	res, err := ingress(withIngress(testHost, "/api"), "dev")
+	if err != nil {
+		t.Fatalf("ingress: %v", err)
+	}
+
+	// ECS moves tasks between the two target groups, so they must be identical.
+	if !reflect.DeepEqual(res[targetGroupId].Properties, res[alternateTargetGroupId].Properties) {
+		t.Error("target groups differ")
+	}
+
+	// The test rule: 8443 listener, host only (the smoke test hits the readiness path), live target group.
+	test := res[testListenerRuleId].Properties.(ListenerRuleProperties)
+	if !reflect.DeepEqual(test.ListenerArn, ref(paramTestListenerArn)) {
+		t.Errorf("test listener = %v, want a Ref to %s", test.ListenerArn, paramTestListenerArn)
+	}
+	wantCond := []RuleCondition{{Field: "host-header", HostHeaderConfig: &HostHeaderConfig{Values: []string{testHost}}}}
+	if !reflect.DeepEqual(test.Conditions, wantCond) {
+		t.Errorf("test conditions = %+v, want host only", test.Conditions)
+	}
+	if !reflect.DeepEqual(test.Actions, []RuleAction{{Type: "forward", TargetGroupArn: liveTargetGroup()}}) {
+		t.Errorf("test actions = %+v", test.Actions)
+	}
+
+	// Both rules are deleted before either target group: the Fn::If refers to both,
+	// so CloudFormation orders it without a DependsOn (cfn-lint W3005 if one is added).
+	for _, id := range []string{listenerRuleId, testListenerRuleId} {
+		if res[id].DependsOn != nil {
+			t.Errorf("%s DependsOn = %v, want none", id, res[id].DependsOn)
+		}
 	}
 }
 

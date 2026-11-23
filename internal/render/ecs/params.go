@@ -1,15 +1,21 @@
 package ecs
 
 const (
-	paramClusterName         = "ClusterName"
-	paramHTTPSListenerArn    = "HTTPSListenerArn"
-	paramTaskSecurityGroupId = "TaskSecurityGroupId"
-	paramPrivateSubnetIds    = "PrivateSubnetIds"
-	paramALBDNSName          = "ALBDNSName"
-	paramALBZoneId           = "ALBZoneId"
-	paramExecutionRoleArn    = "ExecutionRoleArn"
-	paramHostedZoneId        = "HostedZoneId"
-	paramVPCId               = "VPCId"
+	paramClusterName           = "ClusterName"
+	paramHTTPSListenerArn      = "HTTPSListenerArn"
+	paramTaskSecurityGroupId   = "TaskSecurityGroupId"
+	paramPrivateSubnetIds      = "PrivateSubnetIds"
+	paramALBDNSName            = "ALBDNSName"
+	paramALBZoneId             = "ALBZoneId"
+	paramExecutionRoleArn      = "ExecutionRoleArn"
+	paramHostedZoneId          = "HostedZoneId"
+	paramVPCId                 = "VPCId"
+	paramTestListenerArn       = "TestListenerArn"
+	paramInfrastructureRoleArn = "InfrastructureRoleArn"
+	paramHookInvokeRoleArn     = "HookInvokeRoleArn"
+	paramCanaryHookArn         = "CanaryHookArn"
+	paramActiveTargetGroup     = "ActiveTargetGroup"
+	paramALBFullName           = "ALBFullName"
 )
 
 const ssmString = "AWS::SSM::Parameter::Value<String>"
@@ -60,6 +66,42 @@ func platformParameters() map[string]Parameter {
 			Type:        "AWS::SSM::Parameter::Value<AWS::EC2::VPC::Id>",
 			Description: "The VPC ID of the ECS VPC",
 			Default:     "/forge/ecs/vpc-id",
+		},
+	}
+}
+
+func canaryParameters() map[string]Parameter {
+	return map[string]Parameter{
+		paramTestListenerArn: {
+			Type:        ssmString,
+			Description: "The ARN of the canary test listener",
+			Default:     "/forge/ecs/test-listener-arn",
+		},
+		paramInfrastructureRoleArn: {
+			Type:        ssmString,
+			Description: "The ARN of the ECS Infrastructure Role",
+			Default:     "/forge/shared/ecs-infrastructure-role-arn",
+		},
+		paramHookInvokeRoleArn: {
+			Type:        ssmString,
+			Description: "The ARN of the Hook Invoke ARN used to invoke Lambda",
+			Default:     "/forge/shared/ecs-hook-invoke-role-arn",
+		},
+		paramCanaryHookArn: {
+			Type:        ssmString,
+			Description: "Canary Hook ARN",
+			Default:     "/forge/ecs/canary-hook-arn",
+		},
+		paramActiveTargetGroup: {
+			Type:          "String",
+			Description:   "Target group that production currently forwards to",
+			Default:       "primary",
+			AllowedValues: []string{"primary", "alternate"},
+		},
+		paramALBFullName: {
+			Type:        ssmString,
+			Description: "Full ARN suffix of the ALB",
+			Default:     "/forge/ecs/alb-full-name",
 		},
 	}
 }
