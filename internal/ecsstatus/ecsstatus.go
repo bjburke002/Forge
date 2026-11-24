@@ -46,7 +46,7 @@ func Get(ctx context.Context, cfg aws.Config, name string) ([]status.Result, err
 		stackOut, err := cfClient.DescribeStacks(ctx, cfInput)
 		if err != nil {
 			if stackMissing(err) {
-				r := result(env, nil, nil, nil)
+				r := result(env, nil, nil, nil, nil)
 				results = append(results, r)
 				continue
 			}
@@ -62,11 +62,35 @@ func Get(ctx context.Context, cfg aws.Config, name string) ([]status.Result, err
 			return nil, fmt.Errorf("reading ecs service %s: %w", stackName, err)
 		}
 		if len(ecsService.Services) == 0 {
-			r := result(env, &stackOut.Stacks[0], nil, nil)
+			r := result(env, &stackOut.Stacks[0], nil, nil, nil)
 			results = append(results, r)
 			continue
 		}
 		svc := &ecsService.Services[0]
+
+		lstSvcDeploymentsInputs := &ecsv2.ListServiceDeploymentsInput{
+			Service:    svc.ServiceArn,
+			Cluster:    svc.ClusterArn,
+			MaxResults: aws.Int32(1),
+		}
+
+		lstSvcDeployments, err := ecsClient.ListServiceDeployments(ctx, lstSvcDeploymentsInputs)
+		if err != nil {
+			return nil, fmt.Errorf("listing service deployments for %s: %w", stackName, err)
+		}
+		var dep *ecstypes.ServiceDeployment
+		if len(lstSvcDeployments.ServiceDeployments) > 0 {
+			descOut, err := ecsClient.DescribeServiceDeployments(ctx, &ecsv2.DescribeServiceDeploymentsInput{
+				ServiceDeploymentArns: []string{aws.ToString(lstSvcDeployments.ServiceDeployments[0].ServiceDeploymentArn)},
+			})
+			if err != nil {
+				return nil, fmt.Errorf("describing service deployment for %s: %w", stackName, err)
+			}
+			if len(descOut.ServiceDeployments) > 0 {
+				dep = &descOut.ServiceDeployments[0]
+			}
+		}
+
 		taskDefInput := ecsv2.DescribeTaskDefinitionInput{
 			TaskDefinition: svc.TaskDefinition,
 		}
@@ -76,7 +100,7 @@ func Get(ctx context.Context, cfg aws.Config, name string) ([]status.Result, err
 			return nil, fmt.Errorf("describing task definition for %s: %w", stackName, err)
 		}
 
-		r := result(env, &stackOut.Stacks[0], svc, tdOut.TaskDefinition)
+		r := result(env, &stackOut.Stacks[0], svc, tdOut.TaskDefinition, dep)
 		results = append(results, r)
 	}
 	return results, nil
@@ -92,7 +116,8 @@ func stackMissing(err error) bool {
 	return false
 }
 
-func result(env string, stack *cftypes.Stack, service *ecstypes.Service, taskDef *ecstypes.TaskDefinition) status.Result {
+func result(env string, stack *cftypes.Stack, service *ecstypes.Service,
+	taskDef *ecstypes.TaskDefinition, svcDeployment *ecstypes.ServiceDeployment) status.Result {
 	res := status.Result{
 		Environment: env,
 		Backend:     "ecs",
@@ -134,5 +159,53 @@ func result(env string, stack *cftypes.Stack, service *ecstypes.Service, taskDef
 		res.Image = aws.ToString(taskDef.ContainerDefinitions[0].Image)
 	}
 
+	if svcDeployment != nil {
+		reason := aws.ToString(svcDeployment.StatusReason)
+		stage := string(svcDeployment.LifecycleStage)
+
+		switch svcDeployment.Status {
+		case ecstypes.ServiceDeploymentStatusPending, ecstypes.ServiceDeploymentStatusInProgress:
+			// Mid-deploy the counts are misleading (old and new tasks both run), so don't report Ready.
+			res.Health = "Progressing"
+			res.Ready = ""
+			if stage != "" {
+				res.Conditions = []string{"Canary: " + stage}
+			} else {
+				res.Conditions = []string{"Deploying"} // rolling deploy
+			}
+
+		case ecstypes.ServiceDeploymentStatusRollbackInProgress:
+			// Rollbacks reuse stage names, so show the reason
+			res.Health = "Degraded"
+			res.Ready = ""
+			res.Conditions = []string{
+				withReason("Rolling back", reason),
+			}
+
+		case ecstypes.ServiceDeploymentStatusRollbackSuccessful:
+			// The old release is serving normally; keep the baseline and say why the new one didn't land.
+			res.Conditions = []string{
+				withReason("Last deploy rolled back", reason),
+			}
+
+		case ecstypes.ServiceDeploymentStatusRollbackFailed,
+			ecstypes.ServiceDeploymentStatusStopped,
+			ecstypes.ServiceDeploymentStatusStopRequested:
+			res.Health = "Degraded"
+			res.Ready = ""
+			res.Conditions = []string{
+				withReason(string(svcDeployment.Status), reason),
+			}
+		}
+		// SUCCESSFUL: the baseline from the PRIMARY loop is accurate.
+	}
+
 	return res
+}
+
+func withReason(msg, reason string) string {
+	if reason == "" {
+		return msg
+	}
+	return msg + ": " + reason
 }
