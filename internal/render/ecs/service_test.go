@@ -197,7 +197,7 @@ func TestServiceCanary(t *testing.T) {
 		env                   string
 		canaryBake, finalBake int
 	}{
-		{env: "dev", canaryBake: 1, finalBake: 1},
+		{env: "dev", canaryBake: 2, finalBake: 4},
 		{env: "prod", canaryBake: 5, finalBake: 5},
 	}
 	for _, tt := range tests {
