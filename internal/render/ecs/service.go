@@ -148,7 +148,7 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 
 	canaryBake, finalBake := 5, 5
 	if envName == "dev" {
-		canaryBake, finalBake = 1, 1
+		canaryBake, finalBake = 2, 4
 	}
 
 	serviceProperties := ServiceProperties{

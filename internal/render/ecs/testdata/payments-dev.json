@@ -455,10 +455,10 @@
             "Rollback": true
           },
           "Strategy": "CANARY",
-          "BakeTimeInMinutes": 1,
+          "BakeTimeInMinutes": 4,
           "CanaryConfiguration": {
             "CanaryPercent": 10,
-            "CanaryBakeTimeInMinutes": 1
+            "CanaryBakeTimeInMinutes": 2
           },
           "LifecycleHooks": [
             {
