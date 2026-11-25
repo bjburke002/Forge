@@ -35,6 +35,5 @@ func LedgerHandler(url string) http.HandlerFunc {
 
 		w.WriteHeader(resp.StatusCode)
 		json.NewEncoder(w).Encode(map[string]string{"status": resp.Status})
-		return
 	}
 }
