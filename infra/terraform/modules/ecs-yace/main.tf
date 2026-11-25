@@ -54,6 +54,9 @@ locals {
         AWS/ApplicationELB:
           - Service
           - Environment
+        AWS/ECS:
+          - Service
+          - Environment
       jobs:
         - type: AWS/ApplicationELB
           regions:
@@ -82,6 +85,41 @@ locals {
               statistics: [Minimum]
               period: 60
               length: 180
+        # Service Connect server-side counts; a code's series only exists once it has occurred
+        - type: AWS/ECS
+          regions:
+            - ${data.aws_region.current.region}
+          dimensionNameRequirements:
+            - ServiceName
+            - ClusterName
+            - TargetDiscoveryName
+          searchTags:
+            - key: Project
+              value: forge
+            - key: Backend
+              value: ecs
+          delay: 120
+          metrics:
+            - name: HTTPCode_Target_2XX_Count
+              statistics: [Sum]
+              period: 60
+              length: 180
+              nilToZero: true
+            - name: HTTPCode_Target_3XX_Count
+              statistics: [Sum]
+              period: 60
+              length: 180
+              nilToZero: true
+            - name: HTTPCode_Target_4XX_Count
+              statistics: [Sum]
+              period: 60
+              length: 180
+              nilToZero: true
+            - name: HTTPCode_Target_5XX_Count
+              statistics: [Sum]
+              period: 60
+              length: 180
+              nilToZero: true
   EOT
   adot_config = <<-EOT
     extensions:

@@ -267,13 +267,125 @@
             "ReturnData": false
           },
           {
+            "Id": "s2",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ECS",
+                "MetricName": "HTTPCode_Target_2XX_Count",
+                "Dimensions": [
+                  {
+                    "Name": "ServiceName",
+                    "Value": "forge-payments-prod"
+                  },
+                  {
+                    "Name": "ClusterName",
+                    "Value": {
+                      "Ref": "ClusterName"
+                    }
+                  },
+                  {
+                    "Name": "TargetDiscoveryName",
+                    "Value": "payments"
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
+            "Id": "s3",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ECS",
+                "MetricName": "HTTPCode_Target_3XX_Count",
+                "Dimensions": [
+                  {
+                    "Name": "ServiceName",
+                    "Value": "forge-payments-prod"
+                  },
+                  {
+                    "Name": "ClusterName",
+                    "Value": {
+                      "Ref": "ClusterName"
+                    }
+                  },
+                  {
+                    "Name": "TargetDiscoveryName",
+                    "Value": "payments"
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
+            "Id": "s4",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ECS",
+                "MetricName": "HTTPCode_Target_4XX_Count",
+                "Dimensions": [
+                  {
+                    "Name": "ServiceName",
+                    "Value": "forge-payments-prod"
+                  },
+                  {
+                    "Name": "ClusterName",
+                    "Value": {
+                      "Ref": "ClusterName"
+                    }
+                  },
+                  {
+                    "Name": "TargetDiscoveryName",
+                    "Value": "payments"
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
+            "Id": "s5",
+            "MetricStat": {
+              "Metric": {
+                "Namespace": "AWS/ECS",
+                "MetricName": "HTTPCode_Target_5XX_Count",
+                "Dimensions": [
+                  {
+                    "Name": "ServiceName",
+                    "Value": "forge-payments-prod"
+                  },
+                  {
+                    "Name": "ClusterName",
+                    "Value": {
+                      "Ref": "ClusterName"
+                    }
+                  },
+                  {
+                    "Name": "TargetDiscoveryName",
+                    "Value": "payments"
+                  }
+                ]
+              },
+              "Period": 60,
+              "Stat": "Sum"
+            },
+            "ReturnData": false
+          },
+          {
             "Id": "errors",
-            "Expression": "FILL(e1, 0) + FILL(e2, 0)",
+            "Expression": "FILL(e1, 0) + FILL(e2, 0) + FILL(s5, 0)",
             "ReturnData": false
           },
           {
             "Id": "requests",
-            "Expression": "FILL(r1, 0) + FILL(r2, 0)",
+            "Expression": "FILL(r1, 0) + FILL(r2, 0) + FILL(s2, 0) + FILL(s3, 0) + FILL(s4, 0) + FILL(s5, 0)",
             "ReturnData": false
           },
           {
