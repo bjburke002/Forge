@@ -66,3 +66,17 @@ resource "aws_ssm_parameter" "alb_full_name" {
   type        = "String"
   value       = module.ecs-alb.alb_full_name
 }
+
+resource "aws_ssm_parameter" "serviceconnect_namespace_dev" {
+  name        = "/forge/ecs/service-connect-namespace-dev"
+  description = "Service Connect namespace for Dev resources"
+  type        = "String"
+  value       = module.ecs.dev_serviceconnect_namespace_arn
+}
+
+resource "aws_ssm_parameter" "serviceconnect_namespace_prod" {
+  name        = "/forge/ecs/service-connect-namespace-prod"
+  description = "Service Connect namespace for Prod resources"
+  type        = "String"
+  value       = module.ecs.prod_serviceconnect_namespace_arn
+}
