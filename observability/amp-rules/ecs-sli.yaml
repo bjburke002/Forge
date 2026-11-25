@@ -2,13 +2,19 @@ groups:
   - name: forge-ecs-sli
     interval: 1m
     rules:
+      # ALB plus Service Connect, which has no request count, so its requests are the sum of its status codes.
+      # Summed per minute before the 5m window
       - record: forge:requests:rate5m
         expr: |
           sum by (namespace, service, backend) (
             label_replace(
               label_replace(
                 label_join(
-                  sum_over_time(aws_applicationelb_request_count_sum{tag_Service!=""}[5m]),
+                  sum_over_time(
+                    sum by (tag_Service, tag_Environment) (
+                      {__name__=~"aws_applicationelb_request_count_sum|aws_ecs_httpcode_target_[2-5]_xx_count_sum", tag_Service!=""}
+                    )[5m:1m]
+                  ),
                   "namespace", "-", "tag_Service", "tag_Environment"
                 ),
                 "service", "$1", "tag_Service", "(.+)"
@@ -24,7 +30,11 @@ groups:
               label_replace(
                 label_replace(
                   label_join(
-                    sum_over_time(aws_applicationelb_httpcode_target_5_xx_count_sum{tag_Service!=""}[5m]),
+                    sum_over_time(
+                      sum by (tag_Service, tag_Environment) (
+                        {__name__=~"aws_applicationelb_httpcode_target_5_xx_count_sum|aws_ecs_httpcode_target_5_xx_count_sum", tag_Service!=""}
+                      )[5m:1m]
+                    ),
                     "namespace", "-", "tag_Service", "tag_Environment"
                   ),
                   "service", "$1", "tag_Service", "(.+)"
