@@ -1,26 +1,27 @@
 package ecs
 
 const (
-	paramClusterName           = "ClusterName"
-	paramHTTPSListenerArn      = "HTTPSListenerArn"
-	paramTaskSecurityGroupId   = "TaskSecurityGroupId"
-	paramPrivateSubnetIds      = "PrivateSubnetIds"
-	paramALBDNSName            = "ALBDNSName"
-	paramALBZoneId             = "ALBZoneId"
-	paramExecutionRoleArn      = "ExecutionRoleArn"
-	paramHostedZoneId          = "HostedZoneId"
-	paramVPCId                 = "VPCId"
-	paramTestListenerArn       = "TestListenerArn"
-	paramInfrastructureRoleArn = "InfrastructureRoleArn"
-	paramHookInvokeRoleArn     = "HookInvokeRoleArn"
-	paramCanaryHookArn         = "CanaryHookArn"
-	paramActiveTargetGroup     = "ActiveTargetGroup"
-	paramALBFullName           = "ALBFullName"
+	paramClusterName             = "ClusterName"
+	paramHTTPSListenerArn        = "HTTPSListenerArn"
+	paramTaskSecurityGroupId     = "TaskSecurityGroupId"
+	paramPrivateSubnetIds        = "PrivateSubnetIds"
+	paramALBDNSName              = "ALBDNSName"
+	paramALBZoneId               = "ALBZoneId"
+	paramExecutionRoleArn        = "ExecutionRoleArn"
+	paramHostedZoneId            = "HostedZoneId"
+	paramVPCId                   = "VPCId"
+	paramTestListenerArn         = "TestListenerArn"
+	paramInfrastructureRoleArn   = "InfrastructureRoleArn"
+	paramHookInvokeRoleArn       = "HookInvokeRoleArn"
+	paramCanaryHookArn           = "CanaryHookArn"
+	paramActiveTargetGroup       = "ActiveTargetGroup"
+	paramALBFullName             = "ALBFullName"
+	paramServiceConnectNamespace = "ServiceConnectNamespace"
 )
 
 const ssmString = "AWS::SSM::Parameter::Value<String>"
 
-func platformParameters() map[string]Parameter {
+func platformParameters(envName string) map[string]Parameter {
 	return map[string]Parameter{
 		paramClusterName: {
 			Type:        ssmString,
@@ -66,6 +67,11 @@ func platformParameters() map[string]Parameter {
 			Type:        "AWS::SSM::Parameter::Value<AWS::EC2::VPC::Id>",
 			Description: "The VPC ID of the ECS VPC",
 			Default:     "/forge/ecs/vpc-id",
+		},
+		paramServiceConnectNamespace: {
+			Type:        ssmString,
+			Description: "Task Service Connect Namespace",
+			Default:     "/forge/ecs/service-connect-namespace-" + envName,
 		},
 	}
 }

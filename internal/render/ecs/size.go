@@ -37,8 +37,10 @@ func steps(lo, hi, step int) []int {
 func taskSize(r v1alpha1.ResourceSpec) (cpu, memory string, err error) {
 	// Round up: a task must never get less than the contract asks for.
 	cpuUnits := int((r.Requests.CPU.MilliValue()*1024 + 999) / 1000)
+	cpuUnits += 256
 	const mib = 1 << 20
 	memMiB := int((r.Limits.Memory.Value() + mib - 1) / mib)
+	memMiB += 64
 	memMiB = max(memMiB, minTaskMemoryMiB)
 
 	for _, size := range fargateSizes {

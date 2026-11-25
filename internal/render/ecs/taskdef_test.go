@@ -57,9 +57,9 @@ func TestTaskDefinition(t *testing.T) {
 	if !reflect.DeepEqual(td.RequiresCompatibilities, []string{"FARGATE"}) || td.NetworkMode != "awsvpc" {
 		t.Errorf("compatibilities %v, network mode %q; want [FARGATE], awsvpc", td.RequiresCompatibilities, td.NetworkMode)
 	}
-	// The rounding rule's result for payments (E3.2): 0.25 vCPU and the 1 GB floor.
-	if td.CPU != "256" || td.Memory != "1024" {
-		t.Errorf("task size = %s / %s, want 256 / 1024", td.CPU, td.Memory)
+	// payments' 25m plus the Service Connect proxy's 256 units: 0.5 vCPU. Memory stays at the 1 GB floor.
+	if td.CPU != "512" || td.Memory != "1024" {
+		t.Errorf("task size = %s / %s, want 512 / 1024", td.CPU, td.Memory)
 	}
 	if !reflect.DeepEqual(td.ExecutionRoleArn, ref(paramExecutionRoleArn)) {
 		t.Errorf("execution role = %v, want a Ref to %s", td.ExecutionRoleArn, paramExecutionRoleArn)
@@ -72,7 +72,7 @@ func TestTaskDefinition(t *testing.T) {
 	if c.Image != testImage {
 		t.Errorf("image = %q, want %q", c.Image, testImage)
 	}
-	if !reflect.DeepEqual(c.PortMappings, []PortMapping{{ContainerPort: 8080, Protocol: "tcp"}}) {
+	if !reflect.DeepEqual(c.PortMappings, []PortMapping{{Name: "http", AppProtocol: "http", ContainerPort: 8080, Protocol: "tcp"}}) {
 		t.Errorf("port mappings = %+v", c.PortMappings)
 	}
 	if !reflect.DeepEqual(c.Environment, []KeyValuePair{{Name: "LOG_LEVEL", Value: "info"}}) {

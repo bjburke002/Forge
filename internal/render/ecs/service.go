@@ -28,6 +28,7 @@ type ServiceProperties struct {
 	LoadBalancers                 []LoadBalancer                 `json:"LoadBalancers,omitempty"`
 	HealthCheckGracePeriodSeconds int                            `json:"HealthCheckGracePeriodSeconds,omitempty"`
 	DeploymentConfiguration       DeploymentConfiguration        `json:"DeploymentConfiguration"`
+	ServiceConnectConfiguration   *ServiceConnectConfiguration   `json:"ServiceConnectConfiguration,omitempty"`
 	PropagateTags                 string                         `json:"PropagateTags"`
 	Tags                          []Tag                          `json:"Tags"`
 }
@@ -105,6 +106,23 @@ type PredefinedMetricSpecification struct {
 	PredefinedMetricType string `json:"PredefinedMetricType"`
 }
 
+type ServiceConnectConfiguration struct {
+	Enabled   bool                    `json:"Enabled"`
+	Namespace any                     `json:"Namespace"`
+	Services  []ServiceConnectService `json:"Services"`
+}
+
+type ServiceConnectService struct {
+	PortName      string                `json:"PortName"`
+	DiscoveryName string                `json:"DiscoveryName"`
+	ClientAliases []ServiceConnectAlias `json:"ClientAliases"`
+}
+
+type ServiceConnectAlias struct {
+	Port    int    `json:"Port"`
+	DnsName string `json:"DnsName"`
+}
+
 func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]Resource, error) {
 	name := ResourceName(fsvc.Name, envName)
 	var capacityItem []CapacityProviderStrategyItem
@@ -169,6 +187,22 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 			DeploymentCircuitBreaker: DeploymentCircuitBreaker{
 				Enable:   true,
 				Rollback: true,
+			},
+		},
+		ServiceConnectConfiguration: &ServiceConnectConfiguration{
+			Enabled:   true,
+			Namespace: ref(paramServiceConnectNamespace),
+			Services: []ServiceConnectService{
+				{
+					PortName:      "http",
+					DiscoveryName: fsvc.Name,
+					ClientAliases: []ServiceConnectAlias{
+						{
+							Port:    80,
+							DnsName: fsvc.Name,
+						},
+					},
+				},
 			},
 		},
 		PropagateTags: "SERVICE",

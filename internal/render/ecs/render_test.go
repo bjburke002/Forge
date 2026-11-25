@@ -44,3 +44,13 @@ func TestRenderUnsupportedEnvironment(t *testing.T) {
 		t.Fatal("want an error for staging")
 	}
 }
+
+func TestServiceConnectNamespaceParameter(t *testing.T) {
+	// Each environment resolves its own namespace.
+	for _, env := range []string{"dev", "prod"} {
+		want := "/forge/ecs/service-connect-namespace-" + env
+		if got := platformParameters(env)[paramServiceConnectNamespace].Default; got != want {
+			t.Errorf("%s: default = %v, want %s", env, got, want)
+		}
+	}
+}
