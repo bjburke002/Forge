@@ -65,6 +65,22 @@ resource "aws_vpc_security_group_egress_rule" "task_egress" {
   to_port           = 443
 }
 
+resource "aws_vpc_security_group_ingress_rule" "task_allow_tasks" {
+  security_group_id            = aws_security_group.task.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.task.id
+  from_port                    = 0
+  to_port                      = 65535
+}
+
+resource "aws_vpc_security_group_egress_rule" "task_to_tasks" {
+  security_group_id            = aws_security_group.task.id
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.task.id
+  from_port                    = 0
+  to_port                      = 65535
+}
+
 resource "aws_lb" "this" {
   name               = "${var.cluster_name}-alb"
   load_balancer_type = "application"
