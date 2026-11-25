@@ -20,6 +20,7 @@ func main() {
 	// Because this is a POC, going to feed the app a mockup of dependencies and their health status
 	// from a JSON file
 	readyPath := getEnv("READINESS_FILE", "config/dependencies.json")
+	ledgerURL := getEnv("LEDGER_URL", "")
 
 	// ERROR_RATE is used to simulate 5xx returns. Num must be between 0-1
 	errorRate, err := getFloatEnv("ERROR_RATE", 0)
@@ -37,6 +38,7 @@ func main() {
 	metricsMux := http.NewServeMux()
 
 	mux.HandleFunc("/", api.RootHandler(errorRate))
+	mux.HandleFunc("/ledger", api.LedgerHandler(ledgerURL))
 	mux.HandleFunc("/health/live", api.LivenessHandler)
 	mux.HandleFunc("/health/ready", api.ReadinessHandler(readyPath))
 	metricsMux.Handle("/metrics", metrics.Handler())
