@@ -54,7 +54,7 @@ func getAtt(resource, attribute string) map[string][]string {
 	return map[string][]string{"Fn::GetAtt": {resource, attribute}}
 }
 
-// errorRateAlarm watches the 5xx ratio across both target groups and Service Connect combined
+// errorRateAlarm watches the 5xx ratio across Service Connect, plus both target groups when there's ingress
 func errorRateAlarm(fsvc *v1alpha1.ForgeService, envName string) Resource {
 	name := ResourceName(fsvc.Name, envName)
 	stat := func(id, namespace, metricName string, dims ...MetricDimension) MetricDataQuery {
@@ -78,6 +78,29 @@ func errorRateAlarm(fsvc *v1alpha1.ForgeService, envName string) Resource {
 			MetricDimension{Name: "TargetDiscoveryName", Value: discoveryName(fsvc.Name, envName)})
 	}
 
+	var metrics []MetricDataQuery
+	errors, requests := "", ""
+	if fsvc.Spec.Ingress != nil {
+		metrics = []MetricDataQuery{
+			alb("e1", "HTTPCode_Target_5XX_Count", targetGroupId),
+			alb("e2", "HTTPCode_Target_5XX_Count", alternateTargetGroupId),
+			alb("r1", "RequestCount", targetGroupId),
+			alb("r2", "RequestCount", alternateTargetGroupId),
+		}
+		errors, requests = "FILL(e1, 0) + FILL(e2, 0) + ", "FILL(r1, 0) + FILL(r2, 0) + "
+	}
+	metrics = append(metrics,
+		sc(2), sc(3), sc(4), sc(5),
+		MetricDataQuery{Id: "errors", Expression: errors + "FILL(s5, 0)"},
+		MetricDataQuery{Id: "requests", Expression: requests + "FILL(s2, 0) + FILL(s3, 0) + FILL(s4, 0) + FILL(s5, 0)"},
+		MetricDataQuery{
+			Id:         "ratio",
+			Expression: fmt.Sprintf("IF(requests >= %d, 100 * errors / requests, 0)", alarmMinRequests),
+			Label:      "5xx %",
+			ReturnData: true,
+		},
+	)
+
 	return Resource{
 		Type: "AWS::CloudWatch::Alarm",
 		Properties: AlarmProperties{
@@ -88,21 +111,7 @@ func errorRateAlarm(fsvc *v1alpha1.ForgeService, envName string) Resource {
 			EvaluationPeriods:  3,
 			DatapointsToAlarm:  2,
 			TreatMissingData:   "notBreaching",
-			Metrics: []MetricDataQuery{
-				alb("e1", "HTTPCode_Target_5XX_Count", targetGroupId),
-				alb("e2", "HTTPCode_Target_5XX_Count", alternateTargetGroupId),
-				alb("r1", "RequestCount", targetGroupId),
-				alb("r2", "RequestCount", alternateTargetGroupId),
-				sc(2), sc(3), sc(4), sc(5),
-				{Id: "errors", Expression: "FILL(e1, 0) + FILL(e2, 0) + FILL(s5, 0)"},
-				{Id: "requests", Expression: "FILL(r1, 0) + FILL(r2, 0) + FILL(s2, 0) + FILL(s3, 0) + FILL(s4, 0) + FILL(s5, 0)"},
-				{
-					Id:         "ratio",
-					Expression: fmt.Sprintf("IF(requests >= %d, 100 * errors / requests, 0)", alarmMinRequests),
-					Label:      "5xx %",
-					ReturnData: true,
-				},
-			},
+			Metrics:            metrics,
 		},
 	}
 }

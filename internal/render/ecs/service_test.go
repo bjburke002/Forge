@@ -25,6 +25,7 @@ func renderService(t *testing.T, fsvc *v1alpha1.ForgeService, env string) servic
 		serviceId:        "AWS::ECS::Service",
 		scalableTargetId: "AWS::ApplicationAutoScaling::ScalableTarget",
 		scalingPolicyId:  "AWS::ApplicationAutoScaling::ScalingPolicy",
+		alarmId:          "AWS::CloudWatch::Alarm",
 	}
 	if len(res) != len(want) {
 		t.Fatalf("got %d resources, want %d", len(res), len(want))
@@ -183,12 +184,11 @@ func TestServiceLoadBalancer(t *testing.T) {
 		t.Errorf("DependsOn = %v, want none", res[serviceId].DependsOn)
 	}
 
-	// Without ingress: none of the above, and a rolling deployment.
+	// Without ingress: no load balancer, hook or grace period. The canary goes through Service Connect (TestServiceCanary).
 	r := renderService(t, testService(), "dev")
-	d := r.service.DeploymentConfiguration
 	if r.service.LoadBalancers != nil || r.service.HealthCheckGracePeriodSeconds != 0 ||
-		d.Strategy != "" || d.CanaryConfiguration != nil || d.LifecycleHooks != nil || d.Alarms != nil {
-		t.Errorf("worker service has load balancer or canary settings: %+v", r.service)
+		r.service.DeploymentConfiguration.LifecycleHooks != nil {
+		t.Errorf("worker service has load balancer or hook settings: %+v", r.service)
 	}
 }
 
@@ -201,30 +201,38 @@ func TestServiceCanary(t *testing.T) {
 		{env: "prod", canaryBake: 5, finalBake: 5},
 	}
 	for _, tt := range tests {
-		t.Run(tt.env, func(t *testing.T) {
-			d := renderService(t, withIngress(testHost, "/api"), tt.env).service.DeploymentConfiguration
+		for name, fsvc := range map[string]*v1alpha1.ForgeService{
+			"ingress":    withIngress(testHost, "/api"),
+			"no ingress": testService(),
+		} {
+			t.Run(tt.env+"/"+name, func(t *testing.T) {
+				d := renderService(t, fsvc, tt.env).service.DeploymentConfiguration
 
-			// Same deployment pattern in every environment; only the bake times differ.
-			if d.Strategy != "CANARY" || d.BakeTimeInMinutes != tt.finalBake ||
-				!reflect.DeepEqual(d.CanaryConfiguration, &CanaryConfiguration{CanaryPercent: 10, CanaryBakeTimeInMinutes: tt.canaryBake}) {
-				t.Errorf("strategy %q, bake %d, canary %+v", d.Strategy, d.BakeTimeInMinutes, d.CanaryConfiguration)
-			}
+				// Same deployment pattern for every service and environment; only the bake times differ.
+				if d.Strategy != "CANARY" || d.BakeTimeInMinutes != tt.finalBake ||
+					!reflect.DeepEqual(d.CanaryConfiguration, &CanaryConfiguration{CanaryPercent: 10, CanaryBakeTimeInMinutes: tt.canaryBake}) {
+					t.Errorf("strategy %q, bake %d, canary %+v", d.Strategy, d.BakeTimeInMinutes, d.CanaryConfiguration)
+				}
+				if !reflect.DeepEqual(d.Alarms, &DeploymentAlarms{AlarmNames: []any{ref(alarmId)}, Enable: true, Rollback: true}) {
+					t.Errorf("alarms = %+v", d.Alarms)
+				}
 
-			// The smoke test hits the readiness path on the test listener, whatever ingress.path is.
-			wantHook := []LifecycleHook{{
-				HookTargetArn:   ref(paramCanaryHookArn),
-				RoleArn:         ref(paramHookInvokeRoleArn),
-				LifecycleStages: []string{"POST_TEST_TRAFFIC_SHIFT"},
-				HookDetails:     `{"url":"https://` + testHost + `:8443/health/ready"}`,
-			}}
-			if !reflect.DeepEqual(d.LifecycleHooks, wantHook) {
-				t.Errorf("hooks = %+v", d.LifecycleHooks)
-			}
-
-			if !reflect.DeepEqual(d.Alarms, &DeploymentAlarms{AlarmNames: []any{ref(alarmId)}, Enable: true, Rollback: true}) {
-				t.Errorf("alarms = %+v", d.Alarms)
-			}
-		})
+				// The smoke test hits the readiness path on the test listener, whatever ingress.path is.
+				// No hook without ingress: the Lambda can't reach the namespace.
+				var wantHook []LifecycleHook
+				if fsvc.Spec.Ingress != nil {
+					wantHook = []LifecycleHook{{
+						HookTargetArn:   ref(paramCanaryHookArn),
+						RoleArn:         ref(paramHookInvokeRoleArn),
+						LifecycleStages: []string{"POST_TEST_TRAFFIC_SHIFT"},
+						HookDetails:     `{"url":"https://` + testHost + `:8443/health/ready"}`,
+					}}
+				}
+				if !reflect.DeepEqual(d.LifecycleHooks, wantHook) {
+					t.Errorf("hooks = %+v", d.LifecycleHooks)
+				}
+			})
+		}
 	}
 }
 

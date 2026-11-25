@@ -28,7 +28,6 @@ func renderIngress(t *testing.T, fsvc *v1alpha1.ForgeService) (TargetGroupProper
 		listenerRuleId:         "AWS::ElasticLoadBalancingV2::ListenerRule",
 		testListenerRuleId:     "AWS::ElasticLoadBalancingV2::ListenerRule",
 		recordSetId:            "AWS::Route53::RecordSet",
-		alarmId:                "AWS::CloudWatch::Alarm",
 	}
 	if len(res) != len(want) {
 		t.Fatalf("got %d resources, want %d", len(res), len(want))
