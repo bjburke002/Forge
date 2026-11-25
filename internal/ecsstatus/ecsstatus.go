@@ -129,11 +129,17 @@ func result(env string, stack *cftypes.Stack, service *ecstypes.Service,
 
 	res.Deployed = true
 	res.Sync = string(stack.StackStatus)
+	var internalURL string
 	for _, out := range stack.Outputs {
 		if aws.ToString(out.OutputKey) == "URL" {
 			res.URL = aws.ToString(out.OutputValue)
-			break
 		}
+		if aws.ToString(out.OutputKey) == "InternalURL" {
+			internalURL = aws.ToString(out.OutputValue)
+		}
+	}
+	if res.URL == "" && internalURL != "" {
+		res.URL = internalURL + " (internal)"
 	}
 
 	if service == nil {
