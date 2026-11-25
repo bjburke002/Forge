@@ -195,7 +195,7 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 			Services: []ServiceConnectService{
 				{
 					PortName:      "http",
-					DiscoveryName: fsvc.Name,
+					DiscoveryName: fsvc.Name + "-" + envName,
 					ClientAliases: []ServiceConnectAlias{
 						{
 							Port:    80,

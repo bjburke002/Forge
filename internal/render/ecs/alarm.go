@@ -72,13 +72,10 @@ func errorRateAlarm(fsvc *v1alpha1.ForgeService, envName string) Resource {
 			MetricDimension{Name: "LoadBalancer", Value: ref(paramALBFullName)},
 			MetricDimension{Name: "TargetGroup", Value: getAtt(targetGroup, "TargetGroupFullName")})
 	}
-	// ServiceName is the literal name: a Ref to the service would be circular, since the service refers to this alarm.
-	// Service Connect has no request count, so requests are the sum of its status codes.
+	// Service Connect calls into this service from every caller; requests are the sum of its status codes.
 	sc := func(code int) MetricDataQuery {
 		return stat(fmt.Sprintf("s%d", code), "AWS/ECS", fmt.Sprintf("HTTPCode_Target_%dXX_Count", code),
-			MetricDimension{Name: "ServiceName", Value: name},
-			MetricDimension{Name: "ClusterName", Value: ref(paramClusterName)},
-			MetricDimension{Name: "TargetDiscoveryName", Value: fsvc.Name})
+			MetricDimension{Name: "TargetDiscoveryName", Value: discoveryName(fsvc.Name, envName)})
 	}
 
 	return Resource{
