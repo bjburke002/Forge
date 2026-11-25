@@ -195,7 +195,6 @@ func ingress(fsvc *v1alpha1.ForgeService, envName string) (map[string]Resource, 
 		alternateTargetGroupId: alternateTargetGroup,
 		testListenerRuleId:     testListenerRule,
 		recordSetId:            recordSet,
-		alarmId:                errorRateAlarm(fsvc, envName),
 	}
 
 	return results, nil

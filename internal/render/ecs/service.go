@@ -208,6 +208,20 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 		PropagateTags: "SERVICE",
 		Tags:          serviceTags(fsvc.Name, envName, fsvc.Spec.Owner),
 	}
+	serviceProperties.DeploymentConfiguration.Alarms = &DeploymentAlarms{
+		AlarmNames: []any{ref(alarmId)},
+		Enable:     true,
+		Rollback:   true,
+	}
+
+	canaryConfiguration := &CanaryConfiguration{
+		CanaryPercent:           10.0,
+		CanaryBakeTimeInMinutes: canaryBake,
+	}
+
+	serviceProperties.DeploymentConfiguration.Strategy = "CANARY"
+	serviceProperties.DeploymentConfiguration.BakeTimeInMinutes = finalBake
+	serviceProperties.DeploymentConfiguration.CanaryConfiguration = canaryConfiguration
 
 	if fsvc.Spec.Ingress != nil {
 		// HookDetails needs to be encoded as a JSON object for cloudformation which means it has to be created and marshaled first
@@ -218,10 +232,6 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 			return nil, fmt.Errorf("hook details: %w", err)
 		}
 
-		canaryConfiguration := &CanaryConfiguration{
-			CanaryPercent:           10.0,
-			CanaryBakeTimeInMinutes: canaryBake,
-		}
 		lifecycleHooks := []LifecycleHook{
 			{
 				HookTargetArn:   ref(paramCanaryHookArn),
@@ -232,14 +242,6 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 		}
 
 		serviceProperties.LoadBalancers = loadBalancers
-		serviceProperties.DeploymentConfiguration.Alarms = &DeploymentAlarms{
-			AlarmNames: []any{ref(alarmId)},
-			Enable:     true,
-			Rollback:   true,
-		}
-		serviceProperties.DeploymentConfiguration.Strategy = "CANARY"
-		serviceProperties.DeploymentConfiguration.BakeTimeInMinutes = finalBake
-		serviceProperties.DeploymentConfiguration.CanaryConfiguration = canaryConfiguration
 		serviceProperties.DeploymentConfiguration.LifecycleHooks = lifecycleHooks
 		serviceProperties.HealthCheckGracePeriodSeconds = healthCheckGracePeriodSeconds
 	}
@@ -290,5 +292,6 @@ func serviceDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]
 		serviceId:        service,
 		scalableTargetId: scalableTarget,
 		scalingPolicyId:  scalingPolicy,
+		alarmId:          errorRateAlarm(fsvc, envName),
 	}, nil
 }
