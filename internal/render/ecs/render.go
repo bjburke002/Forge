@@ -42,7 +42,12 @@ func Render(fsvc *v1alpha1.ForgeService, envName string) (*Template, error) {
 
 	params := platformParameters(envName)
 	conditions := map[string]any{}
-	outputs := map[string]Output{}
+	outputs := map[string]Output{
+		"InternalURL": {
+			Value:       "http://" + fsvc.Name,
+			Description: "Service Connect URL",
+		},
+	}
 	if fsvc.Spec.Ingress != nil {
 		outputs["URL"] = Output{
 			Value:       "https://" + fsvc.Spec.Ingress.Host + fsvc.Spec.Ingress.Path,

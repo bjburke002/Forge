@@ -767,6 +767,10 @@
         "Ref": "AlternateTargetGroup"
       }
     },
+    "InternalURL": {
+      "Description": "Service Connect URL",
+      "Value": "http://payments"
+    },
     "ListenerRuleArn": {
       "Description": "ARN of the Listener Rule",
       "Value": {

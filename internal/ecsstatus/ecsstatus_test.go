@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	testURL   = "https://billing-dev.forgeappservices.com"
-	testImage = "241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api:abc123"
+	testURL         = "https://billing-dev.forgeappservices.com"
+	testInternalURL = "http://billing"
+	testImage       = "241197444395.dkr.ecr.us-east-1.amazonaws.com/forge/payments-api:abc123"
 )
 
 func stack(st cftypes.StackStatus, withURL bool) *cftypes.Stack {
@@ -20,6 +21,11 @@ func stack(st cftypes.StackStatus, withURL bool) *cftypes.Stack {
 	if withURL {
 		s.Outputs = []cftypes.Output{{OutputKey: aws.String("URL"), OutputValue: aws.String(testURL)}}
 	}
+	return s
+}
+
+func withOutput(s *cftypes.Stack, key, value string) *cftypes.Stack {
+	s.Outputs = append(s.Outputs, cftypes.Output{OutputKey: aws.String(key), OutputValue: aws.String(value)})
 	return s
 }
 
@@ -197,6 +203,24 @@ func TestResult(t *testing.T) {
 			want: status.Result{Environment: "dev", Backend: "ecs", Deployed: true,
 				Sync: "UPDATE_COMPLETE", Health: "Degraded", Available: 1,
 				Image: testImage, URL: testURL, Conditions: []string{"STOPPED"}},
+		},
+		{
+			name:    "internal only",
+			stack:   withOutput(stack(cftypes.StackStatusUpdateComplete, false), "InternalURL", testInternalURL),
+			service: service(1, 1, ecstypes.DeploymentRolloutStateCompleted, ""),
+			taskDef: taskDef,
+			want: status.Result{Environment: "dev", Backend: "ecs", Deployed: true,
+				Sync: "UPDATE_COMPLETE", Health: "COMPLETED", Ready: "True", Available: 1,
+				Image: testImage, URL: testInternalURL + " (internal)"},
+		},
+		{
+			name:    "public URL wins",
+			stack:   withOutput(stack(cftypes.StackStatusUpdateComplete, true), "InternalURL", testInternalURL),
+			service: service(1, 1, ecstypes.DeploymentRolloutStateCompleted, ""),
+			taskDef: taskDef,
+			want: status.Result{Environment: "dev", Backend: "ecs", Deployed: true,
+				Sync: "UPDATE_COMPLETE", Health: "COMPLETED", Ready: "True", Available: 1,
+				Image: testImage, URL: testURL},
 		},
 	}
 	for _, tt := range tests {

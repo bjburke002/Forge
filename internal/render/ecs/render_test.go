@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bjburke002/forge/pkg/contract/v1alpha1"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata golden files")
@@ -52,5 +54,29 @@ func TestServiceConnectNamespaceParameter(t *testing.T) {
 		if got := platformParameters(env)[paramServiceConnectNamespace].Default; got != want {
 			t.Errorf("%s: default = %v, want %s", env, got, want)
 		}
+	}
+}
+
+func TestRenderOutputs(t *testing.T) {
+	// Every service gets its Service Connect URL but only a service with ingress gets a public one.
+	for name, tt := range map[string]struct {
+		fsvc    *v1alpha1.ForgeService
+		wantURL bool
+	}{
+		"ingress":    {withIngress(testHost, "/"), true},
+		"no ingress": {testService(), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmpl, err := Render(tt.fsvc, "dev")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := tmpl.Outputs["InternalURL"].Value; got != "http://payments" {
+				t.Errorf("InternalURL = %v, want http://payments", got)
+			}
+			if _, ok := tmpl.Outputs["URL"]; ok != tt.wantURL {
+				t.Errorf("URL output present = %v, want %v", ok, tt.wantURL)
+			}
+		})
 	}
 }
