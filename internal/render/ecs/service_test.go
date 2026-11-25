@@ -227,3 +227,27 @@ func TestServiceCanary(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceConnect(t *testing.T) {
+	// Every service joins its environment's namespace under its contract name, so callers use http://payments.
+	want := &ServiceConnectConfiguration{
+		Enabled:   true,
+		Namespace: ref(paramServiceConnectNamespace),
+		Services: []ServiceConnectService{{
+			PortName:      "http",
+			DiscoveryName: "payments",
+			ClientAliases: []ServiceConnectAlias{{Port: 80, DnsName: "payments"}},
+		}},
+	}
+	for name, fsvc := range map[string]*v1alpha1.ForgeService{
+		"ingress":    withIngress(testHost, "/"),
+		"no ingress": testService(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := renderService(t, fsvc, "dev").service.ServiceConnectConfiguration
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("service connect = %+v", got)
+			}
+		})
+	}
+}

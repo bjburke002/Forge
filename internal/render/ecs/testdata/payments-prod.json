@@ -66,6 +66,11 @@
       "Description": "List of IDs for the ECS private subnets",
       "Default": "/forge/ecs/private-subnet-ids"
     },
+    "ServiceConnectNamespace": {
+      "Type": "AWS::SSM::Parameter::Value<String>",
+      "Description": "Task Service Connect Namespace",
+      "Default": "/forge/ecs/service-connect-namespace-prod"
+    },
     "TaskSecurityGroupId": {
       "Type": "AWS::SSM::Parameter::Value<AWS::EC2::SecurityGroup::Id>",
       "Description": "ID for the ECS Task Security Group",
@@ -489,6 +494,24 @@
             "Rollback": true
           }
         },
+        "ServiceConnectConfiguration": {
+          "Enabled": true,
+          "Namespace": {
+            "Ref": "ServiceConnectNamespace"
+          },
+          "Services": [
+            {
+              "PortName": "http",
+              "DiscoveryName": "payments",
+              "ClientAliases": [
+                {
+                  "Port": 80,
+                  "DnsName": "payments"
+                }
+              ]
+            }
+          ]
+        },
         "PropagateTags": "SERVICE",
         "Tags": [
           {
@@ -563,7 +586,7 @@
           "FARGATE"
         ],
         "NetworkMode": "awsvpc",
-        "Cpu": "256",
+        "Cpu": "512",
         "Memory": "1024",
         "ExecutionRoleArn": {
           "Ref": "ExecutionRoleArn"
@@ -575,6 +598,8 @@
             "Essential": true,
             "PortMappings": [
               {
+                "Name": "http",
+                "AppProtocol": "http",
                 "ContainerPort": 8080,
                 "Protocol": "tcp"
               }

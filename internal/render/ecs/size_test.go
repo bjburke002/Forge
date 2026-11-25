@@ -24,14 +24,16 @@ func TestTaskSize(t *testing.T) {
 		wantCPU, wantMem string
 		wantErr          bool
 	}{
-		{name: "payments", cpu: "25m", memLimit: "128Mi", wantCPU: "256", wantMem: "1024"},
-		{name: "exactly 0.25 vCPU", cpu: "250m", memLimit: "1Gi", wantCPU: "256", wantMem: "1024"},
-		{name: "just over 0.25 vCPU", cpu: "300m", memLimit: "512Mi", wantCPU: "512", wantMem: "1024"},
-		{name: "memory above the floor", cpu: "25m", memLimit: "2Gi", wantCPU: "256", wantMem: "2048"},
-		{name: "memory rounds up to the next allowed value", cpu: "25m", memLimit: "1500Mi", wantCPU: "256", wantMem: "2048"},
-		{name: "memory forces a larger CPU", cpu: "25m", memLimit: "3Gi", wantCPU: "512", wantMem: "3072"},
-		{name: "1 vCPU", cpu: "1", memLimit: "2Gi", wantCPU: "1024", wantMem: "2048"},
-		{name: "largest size", cpu: "4", memLimit: "30Gi", wantCPU: "4096", wantMem: "30720"},
+		// Each task also reserves the Service Connect proxy's 256 CPU units and 64 MiB (decision 31).
+		{name: "payments", cpu: "25m", memLimit: "128Mi", wantCPU: "512", wantMem: "1024"},
+		{name: "0.25 vCPU moves up a size for the proxy", cpu: "250m", memLimit: "1Gi", wantCPU: "512", wantMem: "2048"},
+		{name: "just over 0.25 vCPU", cpu: "300m", memLimit: "512Mi", wantCPU: "1024", wantMem: "2048"},
+		{name: "memory above the floor", cpu: "25m", memLimit: "2Gi", wantCPU: "512", wantMem: "3072"},
+		{name: "memory rounds up to the next allowed value", cpu: "25m", memLimit: "1500Mi", wantCPU: "512", wantMem: "2048"},
+		{name: "memory forces a larger CPU", cpu: "25m", memLimit: "4Gi", wantCPU: "1024", wantMem: "5120"},
+		{name: "1 vCPU", cpu: "1", memLimit: "2Gi", wantCPU: "2048", wantMem: "4096"},
+		{name: "largest size", cpu: "3750m", memLimit: "30656Mi", wantCPU: "4096", wantMem: "30720"},
+		{name: "4 vCPU no longer fits with the proxy", cpu: "4", memLimit: "8Gi", wantErr: true},
 		{name: "CPU too large", cpu: "5", memLimit: "1Gi", wantErr: true},
 		{name: "memory too large", cpu: "1", memLimit: "31Gi", wantErr: true},
 	}

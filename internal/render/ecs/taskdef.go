@@ -43,6 +43,8 @@ type ContainerDefinition struct {
 }
 
 type PortMapping struct {
+	Name          string `json:"Name"`
+	AppProtocol   string `json:"AppProtocol"`
 	ContainerPort int32  `json:"ContainerPort"`
 	Protocol      string `json:"Protocol"`
 }
@@ -95,8 +97,10 @@ func taskDefinition(fsvc *v1alpha1.ForgeService, envName string) (map[string]Res
 		Essential: true,
 		PortMappings: []PortMapping{
 			{
+				Name:          "http",
 				ContainerPort: fsvc.Spec.Runtime.Port,
 				Protocol:      "tcp",
+				AppProtocol:   "http",
 			},
 		},
 		Environment:            envs,

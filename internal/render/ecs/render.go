@@ -40,7 +40,7 @@ func Render(fsvc *v1alpha1.ForgeService, envName string) (*Template, error) {
 		}
 	}
 
-	params := platformParameters()
+	params := platformParameters(envName)
 	conditions := map[string]any{}
 	outputs := map[string]Output{}
 	if fsvc.Spec.Ingress != nil {
