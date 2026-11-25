@@ -274,18 +274,8 @@
                 "MetricName": "HTTPCode_Target_2XX_Count",
                 "Dimensions": [
                   {
-                    "Name": "ServiceName",
-                    "Value": "forge-payments-dev"
-                  },
-                  {
-                    "Name": "ClusterName",
-                    "Value": {
-                      "Ref": "ClusterName"
-                    }
-                  },
-                  {
                     "Name": "TargetDiscoveryName",
-                    "Value": "payments"
+                    "Value": "payments-dev"
                   }
                 ]
               },
@@ -302,18 +292,8 @@
                 "MetricName": "HTTPCode_Target_3XX_Count",
                 "Dimensions": [
                   {
-                    "Name": "ServiceName",
-                    "Value": "forge-payments-dev"
-                  },
-                  {
-                    "Name": "ClusterName",
-                    "Value": {
-                      "Ref": "ClusterName"
-                    }
-                  },
-                  {
                     "Name": "TargetDiscoveryName",
-                    "Value": "payments"
+                    "Value": "payments-dev"
                   }
                 ]
               },
@@ -330,18 +310,8 @@
                 "MetricName": "HTTPCode_Target_4XX_Count",
                 "Dimensions": [
                   {
-                    "Name": "ServiceName",
-                    "Value": "forge-payments-dev"
-                  },
-                  {
-                    "Name": "ClusterName",
-                    "Value": {
-                      "Ref": "ClusterName"
-                    }
-                  },
-                  {
                     "Name": "TargetDiscoveryName",
-                    "Value": "payments"
+                    "Value": "payments-dev"
                   }
                 ]
               },
@@ -358,18 +328,8 @@
                 "MetricName": "HTTPCode_Target_5XX_Count",
                 "Dimensions": [
                   {
-                    "Name": "ServiceName",
-                    "Value": "forge-payments-dev"
-                  },
-                  {
-                    "Name": "ClusterName",
-                    "Value": {
-                      "Ref": "ClusterName"
-                    }
-                  },
-                  {
                     "Name": "TargetDiscoveryName",
-                    "Value": "payments"
+                    "Value": "payments-dev"
                   }
                 ]
               },
@@ -609,7 +569,7 @@
           "Services": [
             {
               "PortName": "http",
-              "DiscoveryName": "payments",
+              "DiscoveryName": "payments-dev",
               "ClientAliases": [
                 {
                   "Port": 80,

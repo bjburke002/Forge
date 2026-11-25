@@ -229,13 +229,13 @@ func TestServiceCanary(t *testing.T) {
 }
 
 func TestServiceConnect(t *testing.T) {
-	// Every service joins its environment's namespace under its contract name, so callers use http://payments.
+	// Callers use http://payments; the discovery name carries the environment so CloudWatch can tell dev from prod.
 	want := &ServiceConnectConfiguration{
 		Enabled:   true,
 		Namespace: ref(paramServiceConnectNamespace),
 		Services: []ServiceConnectService{{
 			PortName:      "http",
-			DiscoveryName: "payments",
+			DiscoveryName: "payments-dev",
 			ClientAliases: []ServiceConnectAlias{{Port: 80, DnsName: "payments"}},
 		}},
 	}

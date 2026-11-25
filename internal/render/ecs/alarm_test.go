@@ -22,11 +22,7 @@ func TestErrorRateAlarm(t *testing.T) {
 				groups = append(groups, d[1].Value)
 			case "AWS/ECS":
 				sc = append(sc, m.MetricStat.Metric.MetricName)
-				want := []MetricDimension{
-					{Name: "ServiceName", Value: "forge-payments-prod"},
-					{Name: "ClusterName", Value: ref(paramClusterName)},
-					{Name: "TargetDiscoveryName", Value: "payments"},
-				}
+				want := []MetricDimension{{Name: "TargetDiscoveryName", Value: "payments-prod"}}
 				if !reflect.DeepEqual(d, want) {
 					t.Errorf("service connect dimensions = %+v", d)
 				}

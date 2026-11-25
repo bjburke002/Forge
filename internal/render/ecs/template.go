@@ -48,6 +48,11 @@ func ResourceName(name, env string) string {
 	return "forge-" + name + "-" + env
 }
 
+// discoveryName is the Service Connect name: unique per environment in CloudWatch, which has no namespace dimension.
+func discoveryName(name, env string) string {
+	return name + "-" + env
+}
+
 func serviceTags(name, environment, owner string) []Tag {
 	return []Tag{
 		{

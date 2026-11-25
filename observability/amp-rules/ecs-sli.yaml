@@ -2,46 +2,56 @@ groups:
   - name: forge-ecs-sli
     interval: 1m
     rules:
-      # ALB plus Service Connect, which has no request count, so its requests are the sum of its status codes.
-      # Summed per minute before the 5m window
+      # ALB (tags map to namespace and service) plus Service Connect calls (discovery name <name>-<env>;
+      # no request count, so requests are the sum of its status codes). Summed per minute, then over 5m.
       - record: forge:requests:rate5m
         expr: |
-          sum by (namespace, service, backend) (
-            label_replace(
-              label_replace(
-                label_join(
-                  sum_over_time(
-                    sum by (tag_Service, tag_Environment) (
-                      {__name__=~"aws_applicationelb_request_count_sum|aws_ecs_httpcode_target_[2-5]_xx_count_sum", tag_Service!=""}
-                    )[5m:1m]
-                  ),
-                  "namespace", "-", "tag_Service", "tag_Environment"
-                ),
-                "service", "$1", "tag_Service", "(.+)"
-              ),
-              "backend", "ecs", "", ""
-            )
-          ) / 300
-      # The "or" gives a service with no 5xx a zero series
-      - record: forge:errors:rate5m
-        expr: |
-          (
-            sum by (namespace, service, backend) (
-              label_replace(
+          label_replace(
+            sum_over_time(
+              sum by (namespace, service) (
                 label_replace(
                   label_join(
-                    sum_over_time(
-                      sum by (tag_Service, tag_Environment) (
-                        {__name__=~"aws_applicationelb_httpcode_target_5_xx_count_sum|aws_ecs_httpcode_target_5_xx_count_sum", tag_Service!=""}
-                      )[5m:1m]
-                    ),
+                    sum by (tag_Service, tag_Environment) (aws_applicationelb_request_count_sum{tag_Service!=""}),
                     "namespace", "-", "tag_Service", "tag_Environment"
                   ),
                   "service", "$1", "tag_Service", "(.+)"
-                ),
-                "backend", "ecs", "", ""
-              )
-            ) / 300
+                )
+                or
+                label_replace(
+                  label_replace(
+                    sum by (dimension_TargetDiscoveryName) ({__name__=~"aws_ecs_httpcode_target_[2-5]_xx_count_sum"}),
+                    "namespace", "$1", "dimension_TargetDiscoveryName", "(.+)"
+                  ),
+                  "service", "$1", "dimension_TargetDiscoveryName", "(.+)-[^-]+"
+                )
+              )[5m:1m]
+            ) / 300,
+            "backend", "ecs", "", ""
+          )
+      # The "or" gives a service with no 5xx a zero series
+      - record: forge:errors:rate5m
+        expr: |
+          label_replace(
+            sum_over_time(
+              sum by (namespace, service) (
+                label_replace(
+                  label_join(
+                    sum by (tag_Service, tag_Environment) (aws_applicationelb_httpcode_target_5_xx_count_sum{tag_Service!=""}),
+                    "namespace", "-", "tag_Service", "tag_Environment"
+                  ),
+                  "service", "$1", "tag_Service", "(.+)"
+                )
+                or
+                label_replace(
+                  label_replace(
+                    sum by (dimension_TargetDiscoveryName) (aws_ecs_httpcode_target_5_xx_count_sum),
+                    "namespace", "$1", "dimension_TargetDiscoveryName", "(.+)"
+                  ),
+                  "service", "$1", "dimension_TargetDiscoveryName", "(.+)-[^-]+"
+                )
+              )[5m:1m]
+            ) / 300,
+            "backend", "ecs", "", ""
           )
           or
           forge:requests:rate5m{backend="ecs"} * 0
