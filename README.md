@@ -19,9 +19,11 @@ observes it, with secure defaults baked in.
   workflow, keeps the shared ALB to controller-rendered Ingresses with unique hosts on the
   platform domain, and requires probes, requests and a read-only root filesystem; Pod
   Security Admission enforces the restricted profile on every service namespace.
-- **SLOs:** availability measured at the load balancer, a 30-day error budget and burn
-  rates kept in Amazon Managed Service for Prometheus so they survive teardown, and one
-  provisioned Grafana dashboard for every service.
+- **Canary deploys on ECS:** each release takes 10% of traffic first and is rolled back
+  automatically if its 5xx ratio rises.
+- **SLOs:** availability measured at the load balancer (and at Service Connect on ECS), a
+  30-day error budget and burn rates kept in Amazon Managed Service for Prometheus so they
+  survive teardown, and one provisioned Grafana dashboard for every service.
 - **Shared ingress:** one ALB for all services on each backend, TLS from an ACM wildcard
   certificate, DNS managed by ExternalDNS on EKS and by each service's stack on ECS.
 - **A thin CLI:** `forge` validates a ForgeService offline against the CRD, opens the
@@ -38,7 +40,7 @@ observes it, with secure defaults baked in.
            Argo CD ──> platform components (this repo, charts/platform)
                    └──> services (forge-gitops eks/) ──> Forge controller ──> Deployment, Ingress, ...
 
-    ECS    Terraform ──> VPC · ECS cluster · shared ALB · YACE
+    ECS    Terraform ──> VPC · ECS cluster · shared ALB · Service Connect namespaces · canary hook · YACE
            deploy-ecs workflow ──> services (forge-gitops ecs/) ──> forge render ──> CloudFormation stack
 
     Both   GitHub Actions ──> scan, SBOM, sign ──> ECR ──> image tag commit to forge-gitops
@@ -155,15 +157,18 @@ differently on ECS:
 
 | | EKS | ECS |
 |---|---|---|
-| `resources` | Requests and limits per container | Rounded up to a Fargate task size, at least 1 GB |
+| `resources` | Requests and limits per container | Rounded up to a Fargate task size, at least 1 GB, plus 0.25 vCPU and 64 MiB for the Service Connect proxy |
 | `scaling` target | CPU use of the request | CPU use of the whole task, so the same target scales later |
 | Liveness | The liveness probe restarts the container | Not checked; the ALB readiness check and the deployment circuit breaker cover it |
 | `/tmp` | Writable | Mounted, but not writable by the non-root user |
 | App `/metrics` | Scraped by the in-cluster Prometheus | Not collected |
 | Admission | Kyverno | The pipeline's signature check, and a service control policy that lets only CloudFormation change `forge-*` services |
 | Capacity | Karpenter, Spot first | Fargate Spot for dev; prod keeps one on-demand task |
+| Deploys | Rolling | Canary: 10%, then all, rolled back by the service's 5xx alarm. Bakes are 2 and 4 minutes in dev, 5 and 5 in prod |
+| Service-to-service | Kubernetes Service DNS | Service Connect: `http://<name>`, resolving only within the same environment |
 
-On both backends the SLI comes from the ALB, so a service without `ingress` has no SLO.
+On EKS the SLI comes from the ALB, so a service without `ingress` has no SLO. On ECS it
+also counts Service Connect calls, so one does.
 
 ## The forge CLI
 
@@ -186,7 +191,9 @@ verify it, or build it yourself:
 `create` and `promote` take `--dry-run` to print the files instead of opening a pull
 request. `create` takes `--target` (`eks` or `ecs`, default `eks`); `promote` finds the
 service's backend itself, and a `--target` given to it must match. `status` asks both
-backends, or one with `--target`; a backend it can't reach is reported and skipped.
+backends, or one with `--target`; a backend it can't reach is reported and skipped. On
+ECS it shows a canary's stage while one runs, and `http://<name> (internal)` for a
+service without `ingress`.
 Every command takes `--config <path>` and `--context <kube context>`.
 
 **Configuration.** The CLI reads `~/.config/forge/config.yaml` if it exists, otherwise

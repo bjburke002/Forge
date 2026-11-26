@@ -145,6 +145,12 @@ Revision 2.9 (November 2026) records the second backend, ECS on Fargate (§27):
 - YACE on ECS feeds the same AMP budget rules, dashboard and forge slo.
 - The Terraform main root moved to infra/terraform/eks (§21).
 
+Revision 2.10 (November 2026) records canary deploys and Service Connect on ECS (§27):
+
+- Every ECS service deploys as a canary, rolled back by an alarm on its 5xx ratio. A service with ingress also gets a test listener and a smoke test.
+- Services call each other over Service Connect at http://&lt;name&gt;, within one environment.
+- A service without ingress has an SLO on ECS, measured from Service Connect calls.
+
 ## 3. Non-Goals
 
 Stating what Forge is not is the cheapest defense against scope creep. Forge does not attempt:
@@ -1058,26 +1064,34 @@ The same ForgeService runs on ECS with Fargate, with no Kubernetes control plane
 
 **Why not ACK from EKS.** Earlier revisions planned to keep EKS as the control plane and have the controller render ACK resources for ECS. The cluster is torn down nightly, so ECS services would have had no control plane most of the time. ECS Express Mode was tried and rejected: it generates hostnames, owns its ALB, and a custom domain only works by editing resources Express owns, again after every create.
 
-**Foundation.** infra/terraform/ecs builds a separate VPC (10.30.0.0/16; private task subnets, one NAT gateway, only the ALB in public subnets), the cluster with the FARGATE and FARGATE_SPOT capacity providers, one shared ALB with the wildcard certificate, and YACE. It writes the values stacks need to SSM under /forge/ecs/. The IAM roles live in the persistent root: the task execution role, the forge-gitops deploy role (GitHub OIDC, main branch only) and the CloudFormation service role that does the work. Like EKS, it is torn down nightly: make down deletes every service stack, then destroys the root, then runs a leftover check. make up applies the root and then runs the deploy workflow for every service. Up, it costs about \$0.15 an hour, roughly \$9 a month at 60 hours.
+**Foundation.** infra/terraform/ecs builds a separate VPC (10.30.0.0/16; private task subnets, one NAT gateway, only the ALB in public subnets), the cluster with the FARGATE and FARGATE_SPOT capacity providers, one shared ALB with the wildcard certificate, a Cloud Map namespace per environment (forge-dev, forge-prod), the canary smoke-test Lambda, and YACE. It writes the values stacks need to SSM under /forge/ecs/. The IAM roles live in the persistent root: the task execution role, the forge-gitops deploy role (GitHub OIDC, main branch only) and the CloudFormation service role that does the work. Like EKS, it is torn down nightly: make down deletes every service stack, then destroys the root, then runs a leftover check. make up applies the root and then runs the deploy workflow for every service. Up, it costs about \$0.15 an hour, roughly \$9 a month at 60 hours.
 
 **Rendering.** internal/render/ecs turns a built overlay into one CloudFormation template per service and environment, for the stack forge-&lt;name&gt;-&lt;env&gt;. Platform values are SSM-backed parameters, so rendering is offline and a template holds no account's IDs. It is written as JSON with small local Go types; YAML was rejected because the available encoder sorts keys and can't write intrinsic tags.
 
 | Contract | ECS |
 |---|---|
 | image, runtime.port, env | Task definition with one container: non-root, read-only root filesystem, a /tmp volume, logs to a log group the stack owns |
-| resources | Task size: the smallest Fargate CPU at or above the summed requests, then the smallest memory for that CPU at or above the summed limits, at least 1 GB |
+| resources | Task size: the smallest Fargate CPU at or above the summed requests, then the smallest memory for that CPU at or above the summed limits, at least 1 GB. The Service Connect proxy shares the task, so 256 CPU units and 64 MiB are added first, as AWS recommends |
 | scaling | ECS service with the deployment circuit breaker and rollback; Application Auto Scaling target tracking on CPU. Dev runs on Fargate Spot; prod keeps one FARGATE task and puts the rest on Spot |
 | health | The target group's health check on the readiness path |
-| ingress | Target group, a listener rule on the shared ALB matching the host (and the path, when it isn't /), and a Route 53 alias. The rule's priority is an FNV-1a hash of the host, since every rule matches a unique host and only uniqueness matters |
+| ingress | Two target groups for canaries, a listener rule on the shared ALB matching the host (and the path, when it isn't /), a test rule on the canary listener, and a Route 53 alias. The rule's priority is an FNV-1a hash of the host, since every rule matches a unique host and only uniqueness matters |
 | owner | Tags, with Project=forge and Backend=ecs on every stack |
 
 Golden templates in internal/render/ecs/testdata pin the output, and both pass cfn-lint.
 
 **Deploying.** There is no forge deploy command: it would change the system without a commit and break the design rule (§14). forge-gitops' deploy-ecs.yaml is the only deploy path. A detect job checks the foundation is up (the /forge/ecs/https-listener-arn parameter exists; if not, it succeeds without deploying) and finds the changed environments from the push's diff: a base change means every environment of that service, and a deleted folder means delete its stack. A matrix job per environment then runs under the deploy role: kustomize build, cosign verify against the same identity Kyverno checks (§16.2), forge render, and aws cloudformation deploy with the service role. A stack a failed first create left in ROLLBACK_COMPLETE is deleted first. CI's image write-back is the same as on EKS, so a merged image tag redeploys the service.
 
+**Canary deploys.** Every service uses ECS's built-in canary: 10% of traffic moves to the new tasks, then all of it after a bake, then a final bake (2 and 4 minutes in dev, 5 and 5 in prod). Each service's stack has an alarm on its 5xx ratio, over its target groups and its Service Connect calls; the alarm firing during a deployment rolls it back. CloudFormation finishes only after the final bake, so a green pipeline means the canary passed. The alarm takes about 3–4 minutes to fire on ALB traffic and about 5 on Service Connect, because of CloudWatch's delay and its 2-of-3-minutes rule.
+
+- *With ingress,* traffic shifts at the ALB. A shared HTTPS test listener on 8443, open only to the NAT gateway's address, has a host rule per service that sends to the new tasks first. A shared Lambda calls the readiness path through it with the x-amzn-ecs-blue-green-test header before production traffic moves, and fails the deployment on anything but a 2xx.
+- *Without ingress,* traffic shifts at the Service Connect proxies. There's no smoke test, because the Lambda isn't in the namespace; the alarm alone decides.
+- *The live target group.* ECS rewrites the listener rules during a deployment, and a stack update that touches a rule would put the template's single forward back, onto the empty target group (a known CloudFormation limitation). The pipeline reads which target group is live and passes it as the ActiveTargetGroup parameter, which the rules forward to.
+
+**Service Connect.** Every service registers in its environment's namespace, and callers in the same environment reach it at http://&lt;name&gt;, so app configuration is the same in dev and prod. The discovery name is &lt;name&gt;-&lt;env&gt;, because CloudWatch's Service Connect metrics have no namespace dimension. Tasks reach each other directly, so the task security group allows traffic between tasks. Changing a service's discovery name means recreating the service: ECS won't move its alias in place.
+
 **Guardrails.** Without Kyverno, the signature check runs in the pipeline, before any stack changes. A service control policy on the account denies creating, updating and deleting ECS services named forge-* on the cluster, and changing their scaling, to everyone but the CloudFormation role, so a console change can't drift a stack. It matches by name rather than tag, because Terraform's default tags put Backend=ecs on platform resources too, and a tag can be removed. Names starting with forge- are reserved for rendered services; platform services use others, such as platform-yace.
 
-**Observability.** YACE runs as an ECS service built by Terraform, with an ADOT collector that remote-writes to AMP. It isn't a ForgeService, for the same reason EKS platform components aren't: it needs two containers, a task role and unsigned upstream images. It discovers target groups by tag and exports each stack's Service and Environment tags. An AMP rule group (observability/amp-rules/ecs-sli.yaml) maps them to the namespace and service labels and adds backend="ecs", so the existing budget rules, the dashboard and forge slo work unchanged. App /metrics are not collected: on EKS they stay in the in-cluster Prometheus and only forge:* series reach AMP, so an ADOT sidecar per service would have nothing to feed.
+**Observability.** YACE runs as an ECS service built by Terraform, with an ADOT collector that remote-writes to AMP. It isn't a ForgeService, for the same reason EKS platform components aren't: it needs two containers, a task role and unsigned upstream images. It discovers target groups by tag and exports each stack's Service and Environment tags. An AMP rule group (observability/amp-rules/ecs-sli.yaml) maps them to the namespace and service labels and adds backend="ecs", so the existing budget rules, the dashboard and forge slo work unchanged. A second YACE job reads the Service Connect status counts by discovery name, and the rules add them to the ALB's, so a service without ingress has an SLO. They count only calls from other tasks, never ALB traffic, so nothing is counted twice. App /metrics are not collected: on EKS they stay in the in-cluster Prometheus and only forge:* series reach AMP, so an ADOT sidecar per service would have nothing to feed.
 
 **Differences from EKS.**
 
@@ -1085,5 +1099,7 @@ Golden templates in internal/render/ecs/testdata pin the output, and both pass c
 - *Liveness.* Not checked. A container health check would run a command inside a distroless image with no shell; the ALB readiness check and the circuit breaker cover it.
 - */tmp.* Fargate bind volumes are owned by root, so the non-root container can't write to it. An init container that opens its permissions is the fix if a service needs it.
 - *Admission.* The pipeline's signature check and the service control policy stand in for Kyverno; the Pod requirements have no equivalent, since the renderer sets the security defaults itself.
+- *Status during a canary.* forge status shows the stage; IMAGE is the service's current task definition, so it shows the new release while traffic is still mostly on the old one.
+- *Teardown.* Lambda holds the smoke test's network interfaces for 20 minutes or more after the function is deleted, so make down waits on them.
 
-**Not built.** Per-service AWS access on ECS (a task role per service, the counterpart of §13), a writable /tmp, and an SLI for services without ingress, which neither backend has.
+**Not built.** Per-service AWS access on ECS (a task role per service, the counterpart of §13), a writable /tmp, and on EKS an SLI for services without ingress.
